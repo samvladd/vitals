@@ -55,9 +55,8 @@ final class HostLink {
 
     private var streamScript: String {
         """
-        A="\(agentPath())"; R=/usr/local/libexec/vitals-agent
+        A="\(agentPath())"
         [ "$("$A" version 2>/dev/null)" = "\(vitalsVersion)" ] || { echo NEEDS_AGENT; exit 3; }
-        if [ -x "$R" ] && sudo -n -l "$R" stream >/dev/null 2>&1; then exec sudo -n "$R" stream; fi
         exec "$A" stream
         """
     }

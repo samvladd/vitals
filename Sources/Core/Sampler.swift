@@ -52,6 +52,7 @@ final class Sampler {
     private var ssdKey: String?
     private var hotKeys: [String] = []      // the hottest CPU sensors at the last full scan
     private var ticks = 0
+    private var volumeCache: (Date, [Volume]) = (.distantPast, [])
     private lazy var hasBattery = !registryProperty("AppleSmartBattery", "CurrentCapacity").isEmpty
     private let eCores = (sysctlString("hw.perflevel1.name") == "Efficiency") ? (sysctlInt("hw.perflevel1.logicalcpu") ?? 0) : 0
 
@@ -90,6 +91,7 @@ final class Sampler {
         if s.wSystem == nil, let b = s.battery, let w = b.inWatts { s.wSystem = w }
         sampleIO(&s)
         if withProcs { s.procs = topProcs() } else { prevProcTime = 0 }
+        s.volumes = volumes()
         var boot = timeval(), size = MemoryLayout<timeval>.size
         if sysctlbyname("kern.boottime", &boot, &size, nil, 0) == 0 { s.uptime = s.t - Double(boot.tv_sec) }
         s.thermal = ProcessInfo.processInfo.thermalState.rawValue
@@ -223,6 +225,24 @@ final class Sampler {
         }
         if let p = prevDisk, now > p.2 { s.diskRead = max(0, rd - p.0) / (now - p.2); s.diskWrite = max(0, wr - p.1) / (now - p.2) }
         prevDisk = (rd, wr, now)
+    }
+
+    /// The boot volume and any other local drives. Free space counts purgeable files, as Finder does;
+    /// working that out is slow, so it is refreshed once a minute.
+    private func volumes() -> [Volume] {
+        if Date().timeIntervalSince(volumeCache.0) < 60 { return volumeCache.1 }
+        let keys: [URLResourceKey] = [.volumeLocalizedNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+                                      .volumeAvailableCapacityKey, .volumeIsRootFileSystemKey, .volumeIsLocalKey, .volumeIsBrowsableKey]
+        let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
+        let vols: [Volume] = urls.compactMap { u in
+            guard let r = try? u.resourceValues(forKeys: Set(keys)), r.volumeIsLocal == true, r.volumeIsBrowsable != false,
+                  let total = r.volumeTotalCapacity, total > 1_000_000_000 else { return nil }
+            let boot = r.volumeIsRootFileSystem == true
+            let free = r.volumeAvailableCapacityForImportantUsage.map(Double.init) ?? Double(r.volumeAvailableCapacity ?? 0)
+            return Volume(name: r.volumeLocalizedName ?? u.lastPathComponent, total: Double(total), free: free, boot: boot)
+        }.sorted { $0.boot && !$1.boot }
+        volumeCache = (Date(), vols)
+        return vols
     }
 
     /// The eight processes using the most CPU since the last sample, helpers grouped under one name.

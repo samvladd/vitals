@@ -51,6 +51,11 @@ enum Fmt {
         if b < 1_000_000_000 { return String(format: "%.1f MB/s", b / 1_000_000) }
         return String(format: "%.2f GB/s", b / 1_000_000_000)
     }
+    /// Drive sizes in decimal units, as Finder shows them.
+    static func size(_ b: Double) -> String {
+        if b >= 1e12 { return String(format: "%.2f TB", b / 1e12) }
+        return b >= 1e11 ? String(format: "%.0f GB", b / 1e9) : String(format: "%.1f GB", b / 1e9)
+    }
     static func temp(_ t: Double?) -> String { t.map { String(format: "%.0f°", $0) } ?? "—" }
     static func pct(_ p: Double?) -> String { p.map { String(format: "%.0f%%", $0) } ?? "—" }
     static let grouped: NumberFormatter = { let f = NumberFormatter(); f.numberStyle = .decimal; f.maximumFractionDigits = 0; return f }()

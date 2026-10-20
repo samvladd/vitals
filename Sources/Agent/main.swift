@@ -22,20 +22,65 @@ func fail(_ msg: String) -> Never { FileHandle.standardError.write((msg + "\n").
 
 var signalSources: [DispatchSourceSignal] = []
 
+/// Fan writes need root. The streaming agent runs as you; when a fan leaves Auto it starts the
+/// root-owned copy (allowed by the sudo rule from `setup-root`) as a driver and passes it the policy.
+/// Closing the driver's input hands the fans back to macOS, also if this agent dies.
+final class FanDriver {
+    static let path = rootPath
+    let available: Bool
+    private(set) var policy = "auto"
+    private var proc: Process?
+    private var input: FileHandle?
+
+    init() {
+        available = FileManager.default.isExecutableFile(atPath: Self.path) && run("/usr/bin/sudo", ["-n", "-l", Self.path, "stream"]) == 0
+    }
+
+    func set(_ p: String) {
+        policy = p
+        guard available else { return }
+        if p == "auto" { stop(); return }
+        if proc?.isRunning != true { start() }
+        send("fan \(p)")
+    }
+
+    private func start() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        p.arguments = ["-n", Self.path, "stream"]
+        let pipe = Pipe()
+        p.standardInput = pipe
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return }
+        proc = p; input = pipe.fileHandleForWriting
+        send("interval 2")
+    }
+
+    func stop() {
+        try? input?.close()
+        input = nil; proc = nil
+    }
+
+    private func send(_ line: String) { try? input?.write(contentsOf: Data((line + "\n").utf8)) }
+}
+
 func stream() -> Never {
     let sampler = Sampler(procs: false)
     let fans = (geteuid() == 0) ? sampler.smc.map { FanControl(smc: $0) } : nil
+    let driver = fans == nil ? FanDriver() : nil
     var interval = 2.0
     let timer = DispatchSource.makeTimerSource(queue: .main)
 
     func tick() {
         var s = sampler.sample()
         fans?.apply(cpuTemp: s.tCPU)
-        s.fanPolicy = fans?.policy.text ?? "auto"
+        s.fanPolicy = fans?.policy.text ?? driver?.policy ?? "auto"
+        if let driver { s.root = driver.available }
         emit(s)
     }
     func schedule() { timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(Int(interval * 100))) }
-    func quit() -> Never { fans?.release(); exit(0) }
+    func quit() -> Never { fans?.release(); driver?.stop(); usleep(300_000); exit(0) }
 
     timer.setEventHandler(handler: tick)
     _ = sampler.sample()                        // prime the counters so the first line has rates
@@ -59,7 +104,8 @@ func stream() -> Never {
             DispatchQueue.main.async {
                 switch w.first {
                 case "interval": if let v = w.dropFirst().first.flatMap(Double.init), v >= 0.5, v <= 60 { interval = v; schedule() }
-                case "fan": if let p = FanControl.Policy(Array(w.dropFirst())) { fans?.set(p); tick() }
+                case "fan":
+                    if let p = FanControl.Policy(Array(w.dropFirst())) { fans?.set(p); driver?.set(p.text); tick() }
                 case "now": tick()
                 case "procs": sampler.withProcs = w.dropFirst().first == "on"
                 default: break

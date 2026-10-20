@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.snapshot(StatusBarPreview(image: StatusRenderer.image(for: self.links)), to: dir.appendingPathComponent("menubar.png"))
                 NSApp.terminate(nil)
             }
-            for l in links { l.interval = 1 }
+            for l in links { l.interval = 1; l.wantsProcs = true }
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.links.forEach { $0.fetchHistory() } }
         }
 

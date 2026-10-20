@@ -2,7 +2,7 @@ import Foundation
 
 // The wire format between the agent (on each Mac) and the menu bar app: one JSON object per line.
 
-let vitalsVersion = "1.0.3"
+let vitalsVersion = "1.0.4"
 
 struct Fan: Codable, Equatable {
     var rpm: Double
@@ -23,6 +23,13 @@ struct Battery: Codable, Equatable {
     var health: Double?           // % of design capacity
     var minutesLeft: Int?
     var temp: Double?
+}
+
+struct Volume: Codable, Equatable {
+    var name: String
+    var total: Double             // bytes
+    var free: Double              // bytes available, purgeable space counted as free (as Finder does)
+    var boot: Bool
 }
 
 struct Proc: Codable, Equatable {
@@ -76,6 +83,7 @@ struct Snapshot: Codable {
     var netOut: Double?
     var diskRead: Double?
     var diskWrite: Double?
+    var volumes: [Volume] = []
     var procs: [Proc] = []
     var uptime: Double = 0
 }
