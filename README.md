@@ -21,6 +21,8 @@ from your laptop — without installing a 100 MB monitoring suite on either.
 - **Pressure, in every sense** — a bar per CPU core, load, memory pressure and swap, macOS thermal
   pressure, CPU/GPU/SSD temperatures, GPU load, network and disk throughput, and the processes behind
   the load.
+- **Storage** — free space on each Mac's drive (counted as Finder counts it) and any other local drive,
+  flagged when it runs low.
 - **One finding** — a sentence under the title says what needs attention ("Memory is the pressure
   point: 19.8 of 24 GB used, 4.5 GB in swap").
 - **Fans** — Auto, Fixed (drag to a speed) or Curve (follows CPU temperature between two points).
@@ -70,7 +72,8 @@ there by itself.
 Writing fan speeds needs root, so it is opt-in, once per Mac: **Settings → Fan control → Set up**.
 It asks for your password once, then installs a root-owned copy of the agent at
 `/usr/local/libexec/vitals-agent` and a sudo rule that allows exactly `vitals-agent stream` and nothing
-else. By hand:
+else. Only fan writes go through that copy; everything else runs as you, so updating Vitals never
+asks for the password again. By hand:
 
 ```bash
 sudo "$HOME/Library/Application Support/Vitals/bin/vitals-agent" setup-root
@@ -95,6 +98,7 @@ Fan control talks to the SMC directly, as those apps do; use it at your own risk
 | --- | --- | --- |
 | `Vitals.app` | your Mac | Menu bar item and panel. |
 | `vitals-agent stream` | each Mac | Reads the SMC (temperatures, fans, system watts), IOReport (CPU/GPU/memory energy), CPU ticks, VM stats and I/O counters; prints one JSON line per tick. The remote one runs over a single SSH connection. |
+| root-owned `vitals-agent` | each Mac, only while a fan is off Auto | Writes fan speeds. Started by the agent when you pick Fixed or Curve, stopped when you go back to Auto. |
 | `vitals-agent log` | each Mac, under launchd | Writes the per-minute log to `~/Library/Application Support/Vitals/Logs/`. |
 
 No network traffic leaves your machines except that SSH connection. No analytics, no accounts.

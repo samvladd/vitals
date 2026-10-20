@@ -50,10 +50,7 @@ final class Dashboard: Canvas {
         let fanTop = left + gap
         left = fanTop
         fanCard(l, s, x: pad, y: &left)
-        let powerBottom = fanTop - gap
         pressureGrid(s, x: pad + colW + gap, y: &right)
-        right += gap
-        ioCard(s, x: pad + colW + gap, y: &right, bottom: powerBottom)
         right += gap
         procCard(s, x: pad + colW + gap, y: &right, bottom: left)
         let bottom = max(left, right)
@@ -117,12 +114,18 @@ final class Dashboard: Canvas {
     private func finding(_ l: HostLink, _ s: Snapshot?) -> (String, NSColor) {
         if case .offline(let why) = l.state { return (why, Theme.negative) }
         guard let s else { return (l.isLocal ? "Starting the agent on this Mac…" : "Connecting to \(l.sshHost ?? "")…", Theme.muted) }
-        let topProc = s.procs.first.map { $0.name } ?? "nothing in particular"
+        let topProc = s.procs.first?.name
         if s.thermal >= 2 { return ("Thermal pressure is \(s.thermal == 2 ? "serious" : "critical"): macOS is slowing the chip to cool it.", Theme.negative) }
+        if let b = s.volumes.first(where: \.boot), b.free < 8e9 || b.free / max(1, b.total) < 0.05 {
+            return ("Storage is almost full: \(Fmt.size(b.free)) free of \(Fmt.size(b.total)) on \(b.name).", Theme.negative)
+        }
         if s.pressure >= 4 { return ("Memory pressure is critical: \(Fmt.gb(s.swapUsed)) GB is in swap and apps are being squeezed.", Theme.negative) }
-        if let t = s.tCPU, t >= 90 { return ("CPU at \(Fmt.temp(t)) with fans at \(Fmt.rpm(s.fans.map(\.rpm).max() ?? 0)) rpm; \(topProc) is the main load.", Theme.warning) }
+        if let t = s.tCPU, t >= 90 {
+            let fans = s.fans.isEmpty ? "" : " with fans at \(Fmt.rpm(s.fans.map(\.rpm).max() ?? 0)) rpm"
+            return ("CPU at \(Fmt.temp(t))\(fans)" + (topProc.map { "; \($0) is the main load." } ?? "."), Theme.warning)
+        }
         if s.pressure >= 2 { return ("Memory is the pressure point: \(Fmt.gb(s.memUsed)) of \(Fmt.gb(s.memTotal, 0)) GB used, \(Fmt.gb(s.swapUsed)) GB in swap.", Theme.warning) }
-        if let c = s.cpu, c >= 70 { return ("CPU is busy at \(Fmt.pct(c)); \(topProc) is using the most.", Theme.text) }
+        if let c = s.cpu, c >= 70 { return ("CPU is busy at \(Fmt.pct(c))" + (topProc.map { "; \($0) is using the most." } ?? "."), Theme.text) }
         if let b = s.battery, !b.external {
             let left = b.minutesLeft.map { " · \(Fmt.duration(Double($0) * 60)) left at this rate" } ?? ""
             return ("On battery at \(Int(b.percent))%\(left).", Theme.text)
@@ -454,9 +457,10 @@ final class Dashboard: Canvas {
 
     private func pressureGrid(_ s: Snapshot?, x: CGFloat, y: inout CGFloat) {
         let w = colW, cellW = w / 2, cellH: CGFloat = 110, top = y
-        fill(NSRect(x: x, y: top, width: w, height: cellH * 2), Theme.surface, radius: 14)
-        vline(x + cellW, top + 12, cellH * 2 - 24, Theme.line)
+        fill(NSRect(x: x, y: top, width: w, height: cellH * 3), Theme.surface, radius: 14)
+        vline(x + cellW, top + 12, cellH * 3 - 24, Theme.line)
         hline(x + 12, top + cellH, w - 24, Theme.line)
+        hline(x + 12, top + cellH * 2, w - 24, Theme.line)
 
         // CPU: one bar per core, the chip drawn as itself.
         cell(x, top, "CPU", Fmt.pct(s?.cpu), sub: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
@@ -530,7 +534,33 @@ final class Dashboard: Canvas {
             drawText("drawing \(Fmt.wattsUnit(s.wGPU))", Theme.font(11), Theme.faint, mx + 14, ty + 79)
             drawText("Neural Engine \(Fmt.wattsUnit(s.wANE))", Theme.font(11), Theme.faint, mx + 14, ty + 93)
         }
-        y = top + cellH * 2
+
+        // Storage: the boot drive, then any other local drive.
+        let sy = top + cellH * 2
+        if let s, let boot = s.volumes.first(where: \.boot) ?? s.volumes.first {
+            cell(x, sy, "Storage", Fmt.size(boot.free), unit: "free")
+            let freeShare = boot.free / max(1, boot.total)
+            if freeShare < 0.05 || boot.free < 8e9 { pill("Almost full", Theme.pillBad, right: x + cellW - 14, sy + 13) }
+            else if freeShare < 0.12 { pill("Low", Theme.pillWarn, right: x + cellW - 14, sy + 13) }
+            let bar = NSRect(x: x + 14, y: sy + 68, width: cellW - 28, height: 6)
+            fill(bar, Theme.raised, radius: 3)
+            let usedColor = freeShare < 0.05 ? Theme.negative : freeShare < 0.12 ? Theme.warning : Theme.chart2
+            fill(NSRect(x: bar.minX, y: bar.minY, width: max(6, bar.width * CGFloat(1 - freeShare)), height: 6), usedColor, radius: 3)
+            drawText("\(Fmt.size(boot.total - boot.free)) of \(Fmt.size(boot.total)) used", Theme.font(11), Theme.faint, x + 14, sy + 79, maxWidth: cellW - 28)
+            let others = s.volumes.filter { $0 != boot }
+            let more = others.first.map { "\($0.name) · \(Fmt.size($0.free)) free" + (others.count > 1 ? " +\(others.count - 1)" : "") } ?? boot.name
+            drawText(more, Theme.font(11), Theme.faint, x + 14, sy + 93, maxWidth: cellW - 28)
+        } else { cell(x, sy, "Storage", "—") }
+
+        // Network and disk throughput.
+        drawText("Network and disk", Theme.font(12), Theme.faint, mx + 14, sy + 14)
+        let rows: [(String, Double?)] = [("in", s?.netIn), ("out", s?.netOut), ("read", s?.diskRead), ("write", s?.diskWrite)]
+        for (j, (name, v)) in rows.enumerated() {
+            let ry = sy + 34 + CGFloat(j) * 17
+            drawText(name, Theme.font(12), Theme.muted, mx + 14, ry)
+            drawText(Fmt.rate(v), Theme.font(12, .medium), Theme.text, mx + cellW - 14, ry, align: .right)
+        }
+        y = top + cellH * 3
     }
 
     private func cell(_ x: CGFloat, _ y: CGFloat, _ label: String, _ value: String, unit: String? = nil, sub: String? = nil) {
@@ -542,22 +572,6 @@ final class Dashboard: Canvas {
     }
 
     // MARK: network and disk
-
-    private func ioCard(_ s: Snapshot?, x: CGFloat, y: inout CGFloat, bottom: CGFloat) {
-        let w = colW, top = y, h = max(70, bottom - top)
-        fill(NSRect(x: x, y: top, width: w, height: h), Theme.surface, radius: 14)
-        vline(x + w / 2, top + 12, h - 24, Theme.line)
-        for (i, (label, a, b)) in [("Network", ("in", s?.netIn), ("out", s?.netOut)), ("Disk", ("read", s?.diskRead), ("write", s?.diskWrite))].enumerated() {
-            let cx = x + CGFloat(i) * w / 2 + 14, cw = w / 2 - 28
-            drawText(label, Theme.font(12), Theme.faint, cx, top + 12)
-            for (j, (name, v)) in [a, b].enumerated() {
-                let ry = top + 32 + CGFloat(j) * 18
-                drawText(name, Theme.font(12), Theme.muted, cx, ry)
-                drawText(Fmt.rate(v), Theme.font(13, .medium), Theme.text, cx + cw, ry - 1, align: .right)
-            }
-        }
-        y = top + h
-    }
 
     // MARK: processes
 
