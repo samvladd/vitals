@@ -241,6 +241,57 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
   #chart { height: 210px; }
   body.away main { grid-template-columns: 1fr; }
 }
+/* ========== Activity timeline: "what did my Mac do?" (Timeline.swift, GET /timeline) ==========
+   24 hourly CPU bars, coloured by how hard the Mac worked, the busy ones named after the app behind
+   them; asleep stretches are hatched gaps. On a phone it follows the readings; on a wide screen it
+   spans both columns with the moments beside the chart. */
+#dayCard { order: 2; }
+body.away #dayCard { display: none; }
+#dayCard.loading .day-body { opacity: .5; transition: opacity .2s; }
+.daynav { display: flex; gap: 6px; flex: none; }
+.daynav button { width: 32px; height: 32px; border-radius: 50%; background: var(--raised); font-size: 19px; line-height: 30px; }
+.daynav button:hover:not(:disabled) { background: #2e3238; }
+.daynav button:disabled { color: var(--chart4); background: none; cursor: default; }
+.daystats { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 0 24px; margin-top: 10px; }
+.daystats span { display: block; color: var(--faint); font-size: 13px; }
+.daystats b { display: block; font-size: 20px; font-weight: 500; letter-spacing: -0.01em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.daystats small { display: block; color: var(--faint); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl { position: relative; height: 132px; margin-top: 18px; border-bottom: 1px solid var(--chart4); }
+.tl .sleep { position: absolute; top: 0; bottom: 0; border-radius: 4px 4px 0 0; color: var(--faint); font-size: 11px; text-align: center;
+  padding-top: 8px; overflow: hidden; white-space: nowrap; background: repeating-linear-gradient(135deg, transparent 0 5px, var(--raised) 5px 6px); }
+.tl .hb { position: absolute; top: 0; bottom: 0; padding: 0; border-radius: 4px 4px 0 0; }
+.tl .hb:hover { background: #1c1e22; }
+.tl .hb.on { background: var(--raised); }
+.tl .hb i, .tl .hb u { position: absolute; left: 1px; right: 1px; bottom: 0; border-radius: 2px 2px 0 0; }
+.tl .hb u { height: 2px; opacity: .75; border-radius: 1px; }
+.tl .hb em { position: absolute; left: 0; right: 0; font: 600 10px/1 -apple-system, system-ui, sans-serif; font-style: normal;
+  writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: end; }
+.tl .now { position: absolute; top: -6px; bottom: -1px; width: 1.5px; margin-left: -1px; background: var(--text); border-radius: 1px; }
+.tl-axis { position: relative; height: 22px; color: var(--faint); font-size: 12px; }
+.tl-axis span { position: absolute; top: 5px; transform: translateX(-50%); white-space: nowrap; }
+.tl-axis span:first-child { transform: none; }
+.tl-key { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--faint); font-size: 12px; margin-top: 4px; }
+.tl-key span { display: flex; align-items: center; gap: 6px; }
+.tl-key i { width: 9px; height: 9px; border-radius: 2px; }
+.tl-hour { margin-top: 14px; padding: 11px 13px; border-radius: 12px; background: var(--raised); font-size: 14px; color: var(--muted); min-height: 66px; }
+.tl-hour b { color: var(--text); font-weight: 600; }
+.tl-hour div + div { margin-top: 3px; }
+.tl-hour.hint { background: none; border: 1px dashed var(--chart4); display: flex; align-items: center; justify-content: center; color: var(--faint); min-height: 0; }
+.day-side h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 18px 0 2px; }
+.mo { display: grid; grid-template-columns: 8px 1fr; gap: 11px; align-items: baseline; width: 100%; text-align: left; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14.5px; line-height: 1.4; }
+.mo:last-child { border-bottom: 0; }
+.mo .dot { transform: translateY(-1px); }
+.mo b { font-weight: 600; white-space: nowrap; }
+.mo:hover span { color: var(--text); }
+.mo span { color: var(--muted); text-wrap: pretty; }
+@media (min-width: 900px) {
+  #dayCard { grid-column: 1 / -1; }
+  .day-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 0 36px; }
+  .tl { height: 168px; }
+  .tl .hb em { font-size: 11px; }
+  .day-side h3 { margin-top: 12px; }
+}
+/* ========== end of the activity timeline's styles ========== */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -303,6 +354,22 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
       <div id="apps"></div>
     </section>
   </div>
+  <!-- ========== Activity timeline: "what did my Mac do?" (Timeline.swift, GET /timeline) ========== -->
+  <section class="card" id="dayCard" hidden>
+    <div class="row"><h2 id="dayTitle">Today</h2>
+      <div class="daynav"><button id="dayPrev" aria-label="Previous day">‹</button><button id="dayNext" aria-label="Next day">›</button></div></div>
+    <div class="day-body">
+      <div class="day-main">
+        <div class="daystats" id="dayStats"></div>
+        <div class="tl" id="tl" role="group" aria-label="CPU each hour"></div>
+        <div class="tl-axis" id="tlAxis"></div>
+        <div class="tl-key"><span><i style="background:var(--chart3)"></i>Quiet</span><span><i style="background:color-mix(in srgb, var(--accent) 50%, var(--surface))"></i>Working</span><span><i style="background:var(--accent)"></i>Busy</span><span><i style="background:var(--warning)"></i>Flat out</span></div>
+        <div class="tl-hour" id="tlHour"></div>
+      </div>
+      <div class="day-side"><h3 id="momentsTitle">Moments</h3><div id="moments"></div></div>
+    </div>
+  </section>
+  <!-- ========== end of the activity timeline ========== -->
 </main>
 <dialog id="sheet" class="sheet" aria-labelledby="dTitle" autofocus tabindex="-1">
   <div class="sheet-head"><h2 id="dTitle"></h2><button id="done">Done</button></div>
@@ -487,6 +554,7 @@ function render() {
   procs(s);
   renderApps();
   renderDetail();
+  renderDay();                     // the activity timeline
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
 }
 
@@ -1097,6 +1165,153 @@ $('pList').addEventListener('click', async e => {
   } catch { $('pErr').textContent = 'The Mac did not answer.'; }
   ap.opening = null; renderPicker();
 });
+
+// ========== activity timeline: "what did my Mac do?" (Timeline.swift, GET /timeline) ==========
+// One day of the Mac on screen, from its own log, so any Mac in the fleet can be read the same way
+// (h.base + 'timeline'). Past days never change, so each is fetched once; today is fetched again every
+// five minutes while it is on screen. A Mac on a Vitals from before the timeline answers 404: no card.
+const tl = { host: null, day: null, sel: null, all: false, html: '' };
+
+async function loadDay(h, day) {
+  if (h.base == null || h.tlBusy || Date.now() - (h.tlFailed || 0) < 30000) return;
+  h.tlBusy = true;
+  try {
+    const r = await fetch(h.base + 'timeline' + (day ? '?day=' + day : ''), { cache: 'no-store' });
+    if (r.status === 404) h.tlOff = true;
+    else if (!r.ok) throw 0;
+    else { const d = await r.json(); (h.tl ||= {})[d.day] = { d, at: Date.now() }; if (!day) h.tlToday = d.day; }
+  } catch { h.tlFailed = Date.now(); }
+  h.tlBusy = false;
+  renderDay();
+}
+
+// "2:04 am"; midnight by name, so a stretch that runs into the next day reads "11:22 pm–midnight".
+function tlTime(t, mins = true) {
+  const d = new Date(t * 1000), hr = d.getHours(), m = d.getMinutes();
+  if (!hr && !m) return ['midnight', ''];
+  return [`${hr % 12 || 12}${mins ? ':' + String(m).padStart(2, '0') : ''}`, hr < 12 ? 'am' : 'pm'];
+}
+function tlRange(a, b, mins = true) {
+  const [x, xm] = tlTime(a, mins), [y, ym] = tlTime(b, mins);
+  return xm && xm === ym ? `${x}–${y} ${ym}` : `${x}${xm && ' ' + xm}–${y}${ym && ' ' + ym}`;
+}
+// CPU time in minutes of one core; an app on several cores can pass 24 h in a day, so hours, not days.
+const cpuTime = min => min < 1 ? '< 1 m' : min < 60 ? Math.round(min) + ' m' : (min / 60).toFixed(min < 600 ? 1 : 0) + ' h';
+const tlLevel = c => c >= 80 ? 'var(--warning)' : c >= 50 ? 'var(--accent)' : c >= 20 ? 'color-mix(in srgb, var(--accent) 50%, var(--surface))' : 'var(--chart3)';
+const dateOf = day => { const [y, m, d] = day.split('-').map(Number); return new Date(y, m - 1, d); };
+function dayName(day, today) {
+  const date = dateOf(day), back = Math.round((dateOf(today) - date) / 86400000);
+  return back === 0 ? 'Today' : back === 1 ? 'Yesterday' : back < 7 ? date.toLocaleDateString('en-US', { weekday: 'long' })
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** What a moment says, in plain English. */
+function momentText(m, d) {
+  const app = m.app && esc(m.app);
+  switch (m.kind) {
+    case 'busy': return (app ? `${app} kept the CPU at ${F.pct(m.cpu)}` : `The CPU stayed at ${F.pct(m.cpu)}`) + (m.temp ? ` · ${F.temp(m.temp)} at peak` : '');
+    case 'hot': return `Ran hot, up to ${F.temp(m.temp)}` + (m.minutes > 3 ? ` · above 90° for ${F.dur(m.minutes * 60)}` : '') + (app ? ` · ${app} was the main load` : '');
+    case 'swap': return `Swap grew by ${F.gb(m.swap)} GB` + (app && m.mem ? ` · ${app} was holding ${F.mem(m.mem)}` : '');
+    case 'off': return `Off or restarting for ${F.dur(m.end - m.start)}`;
+    default: return m.end >= d.now - 90 && d.now < d.end ? 'Nothing logged since: asleep, or the logger stopped' : `Asleep for ${F.dur(m.end - m.start)}`;
+  }
+}
+const MOMENT_COLOR = { busy: 'var(--warning)', hot: 'var(--negative)', swap: 'var(--warning)', asleep: 'var(--chart3)', off: 'var(--chart3)' };
+
+function renderDay() {
+  const h = cur(), card = $('dayCard');
+  if (h !== tl.host) { tl.host = h; tl.day = null; tl.sel = null; tl.all = false; }
+  const day = tl.day || h.tlToday, got = day && h.tl?.[day];
+  if (h.state !== 'off' && !h.tlOff && !document.hidden && (!got || (day === h.tlToday && Date.now() - got.at > 300000))) loadDay(h, tl.day);
+  if (!got) {                       // keep the day on screen, dimmed, while the next one loads
+    card.classList.add('loading');
+    if (!h.tl || h.tlOff) card.hidden = true;
+    return;
+  }
+  card.classList.remove('loading');
+  card.hidden = !!h.tlOff;
+  const d = got.d, n = d.hours.length, span = d.end - d.start, today = d.days[d.days.length - 1] || d.day;
+  const pos = t => ((t - d.start) / span * 100).toFixed(3) + '%';
+  $('dayTitle').textContent = `${dayName(d.day, h.tlToday || today)} on ${shortName(h)}`;
+  const prev = d.days.filter(x => x < d.day).pop(), next = d.days.find(x => x > d.day);
+  $('dayPrev').disabled = !prev; $('dayNext').disabled = !next;
+  $('dayPrev').dataset.day = prev || ''; $('dayNext').dataset.day = next || '';
+
+  const T = d.totals, busiest = T.apps[0];
+  const stats = `<div><span>Energy</span><b>${T.minutes ? F.energy(T.wh) : '—'}</b></div><div><span>Awake</span><b>${T.minutes ? F.dur(T.minutes * 60) : '—'}</b></div>`
+    + (busiest ? `<div><span>Busiest app</span><b>${esc(busiest.name)}</b><small>${cpuTime(busiest.min)} CPU time</small></div>`
+       : `<div><span>CPU on average</span><b>${T.cpu != null ? F.pct(T.cpu) : '—'}</b></div>`);
+
+  // The bars: each hour's average CPU, a tick at its busiest minute, the top app's name on the busy ones.
+  const sleeps = d.moments.filter(m => m.kind === 'asleep' || m.kind === 'off').map(m => {
+    const w = (m.end - m.start) / span;
+    return `<div class="sleep" style="left:${pos(m.start)};width:${(w * 100).toFixed(3)}%">${w > 0.12 ? (m.kind === 'off' ? 'Off' : 'Asleep') : ''}</div>`;
+  }).join('');
+  const bars = d.hours.map((x, i) => {
+    const end = d.hours[i + 1]?.t ?? d.end, label = tlRange(x.t, end, false);
+    if (!x.minutes) return `<button class="hb${tl.sel === i ? ' on' : ''}" data-i="${i}" style="left:${pos(x.t)};width:${pos(d.start + end - x.t)}" aria-label="${label}: nothing logged"></button>`;
+    const fill = Math.max(3, x.cpu), color = tlLevel(x.cpu), app = x.apps[0]?.name;
+    let name = '';
+    const tick = x.cpuMax - x.cpu >= 8 ? `<u style="bottom:calc(${x.cpuMax}% - 2px);background:${tlLevel(x.cpuMax)}"></u>` : '';
+    // A name above the bar goes in the larger space: under its peak tick, or over it.
+    const [from, to] = !tick || 100 - x.cpuMax > x.cpuMax - fill ? [tick ? x.cpuMax : fill, 100] : [fill, x.cpuMax];
+    if (app && x.cpu >= 20) name = fill >= 50
+      ? `<em style="bottom:5px;max-height:calc(${fill}% - 10px);color:var(--ground)">${esc(app)}</em>`
+      : `<em style="bottom:calc(${from}% + 5px);max-height:calc(${to - from}% - 10px);color:var(--muted)">${esc(app)}</em>`;
+    return `<button class="hb${tl.sel === i ? ' on' : ''}" data-i="${i}" style="left:${pos(x.t)};width:${pos(d.start + end - x.t)}"
+      aria-label="${label}: CPU ${F.pct(x.cpu)}${app ? ', mostly ' + esc(app) : ''}"><i style="height:${fill}%;background:${color}"></i>${tick}${name}</button>`;
+  }).join('');
+  const nowMark = d.now > d.start && d.now < d.end ? `<i class="now" style="left:${pos(d.now)}"></i>` : '';
+  const axis = d.hours.filter(x => new Date(x.t * 1000).getHours() % 6 === 0)
+    .map(x => `<span style="left:${pos(x.t)}">${new Date(x.t * 1000).getHours() === 12 ? 'noon' : tlTime(x.t, false).join(' ').trim()}</span>`).join('');
+
+  // The hour you tapped, or how to.
+  const x = d.hours[tl.sel];
+  const hour = !x ? `<div class="tl-hour hint">Tap an hour to see what ran</div>`
+    : !x.minutes ? `<div class="tl-hour"><div><b>${tlRange(x.t, d.hours[tl.sel + 1]?.t ?? d.end, false)}</b></div><div>${x.t > d.now ? 'Still to come.' : 'Nothing logged: the Mac was asleep or off.'}</div></div>`
+    : `<div class="tl-hour"><div><b>${tlRange(x.t, d.hours[tl.sel + 1]?.t ?? d.end, false)}</b> · CPU ${F.pct(x.cpu)} on average, ${F.pct(x.cpuMax)} at most</div>
+       <div>${x.apps.length ? 'CPU time: ' + x.apps.map(a => `${esc(a.name)} ${cpuTime(a.min)}`).join(' · ') : x.appMinutes ? 'No app stood out.' : 'Apps are logged from this version of Vitals on.'}</div>
+       <div>${F.wu(x.w)} · ${F.energy(x.wh)}${x.tempMax ? ` · ${F.temp(x.tempMax)} at most` : ''}${x.minutes < 55 ? ` · awake ${x.minutes} min` : ''}</div></div>`;
+
+  // Moments, in order; the first six, then the rest on request.
+  const list = d.moments, shown = tl.all ? list : list.slice(0, 6);
+  const moments = !T.minutes ? '<p class="empty">Nothing was logged on this day.</p>'
+    : !list.length ? '<p class="empty">A quiet day: nothing stood out.</p>'
+    : shown.map(m => `<button class="mo" data-t="${m.start}"><i class="dot" style="background:${MOMENT_COLOR[m.kind] || 'var(--chart3)'}"></i>
+        <span><b>${m.end >= d.now - 90 && d.now < d.end && (m.kind === 'asleep') ? 'Since ' + tlTime(m.start).join(' ') : tlRange(m.start, m.end)}</b> · ${momentText(m, d)}</span></button>`).join('')
+      + (list.length > 6 ? `<button class="link" data-act="all" style="margin-top:8px">${tl.all ? 'Show fewer' : `Show all ${list.length}`}<i class="more">›</i></button>` : '')
+      + (!d.apps ? '<p class="fine">Which app was behind each moment is logged from this version of Vitals on.</p>' : '');
+
+  const html = [stats, sleeps + bars + nowMark, axis, hour, moments, list.length].join('\u0000');
+  if (html === tl.html) return;                 // unchanged: leave the DOM (and a tap in flight) alone
+  tl.html = html;
+  $('dayStats').innerHTML = stats; $('tl').innerHTML = sleeps + bars + nowMark; $('tlAxis').innerHTML = axis;
+  $('tlHour').outerHTML = hour.replace('class="tl-hour', 'id="tlHour" class="tl-hour');
+  $('moments').innerHTML = moments;
+  $('momentsTitle').textContent = list.length ? `Moments · ${list.length}` : 'Moments';
+}
+
+$('tl').addEventListener('click', e => {
+  const b = e.target.closest('[data-i]');
+  if (b) { tl.sel = tl.sel === +b.dataset.i ? null : +b.dataset.i; renderDay(); }
+});
+$('moments').addEventListener('click', e => {
+  if (e.target.closest('[data-act=all]')) { tl.all = !tl.all; return renderDay(); }
+  const m = e.target.closest('[data-t]'), d = tl.host?.tl?.[tl.day || tl.host.tlToday]?.d;
+  if (!m || !d) return;
+  const t = +m.dataset.t;
+  tl.sel = Math.max(0, d.hours.findLastIndex(x => x.t <= t));
+  renderDay();
+  $('tlHour').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
+for (const id of ['dayPrev', 'dayNext']) $(id).addEventListener('click', e => {
+  const day = e.currentTarget.dataset.day;
+  if (!day) return;
+  tl.day = day === tl.host?.tlToday ? null : day; tl.sel = null; tl.all = false;
+  renderDay();
+});
+setInterval(() => { if (!document.hidden) renderDay(); }, 60000);     // today's refresh, also while nothing streams
+// ========== end of the activity timeline ==========
 
 // ---------- lifecycle ----------
 document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) { loadHistory(); loadApps(); } });

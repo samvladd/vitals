@@ -211,6 +211,26 @@ there is no list of addresses to keep.
 Each Mac's page may read the others' dashboards (your Macs only, found through Tailscale), never
 change anything on them: quitting apps, fans and the screen stay on each Mac's own page.
 
+## What did my Mac do?
+
+Every dashboard has a **Today on <Mac>** card: the day hour by hour, for the Mac on screen, any Mac
+of the fleet included, and the 13 days before it (‹ ›).
+
+- **A bar per hour**, as tall as the CPU's average and coloured by how hard it worked, with a tick at
+  its busiest minute. Busy hours carry the name of the app behind them; tap an hour for its CPU,
+  watts, temperature and the apps that used the most CPU time. Asleep stretches are hatched gaps.
+- **Moments**, in plain English: "8:04–9:40 pm · Python kept the CPU at 98% · 91° at peak". They are
+  the CPU at 80% or more for ten minutes, the CPU above 90° outside those, swap growing by 2 GB or
+  more, and the Mac asleep, off or restarting. Tap one to see its hour.
+- **The day's totals**: energy, time awake and the busiest app.
+
+It comes from the per-minute log, plus one more line a minute: which apps used the CPU over that
+minute and which held the most memory, kept a year in `Logs/YYYY-MM-DD.procs.jsonl` beside the day's
+CSV (about 250 KB a day). The logger reads each process's CPU time once a minute and takes the
+difference, exact for the minute: about 3 ms of CPU across 1,400 processes, under 0.01% of one core
+on top of the logger's ~0.2%. Apps are logged from this version on, so earlier days show the hours
+and moments without them. What a process used in the minute it quit is not counted.
+
 ## Quit and open apps from your phone
 
 <img src="docs/apps.png" width="300" align="right" alt="The Apps card: each app with its memory and CPU, a Quit button, Tailscale marked Protected, and recent activity">
