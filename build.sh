@@ -18,7 +18,7 @@ enum WebAssets {
     static let icon = Data(base64Encoded: "$(base64 -i build/gen/icon.png)")!
 }
 SWIFT
-swiftc $FLAGS -o build/vitals-agent Sources/Core/*.swift Sources/Agent/main.swift Sources/Agent/Serve.swift build/gen/WebAssets.swift
+swiftc $FLAGS -o build/vitals-agent Sources/Core/*.swift Sources/Agent/*.swift build/gen/WebAssets.swift
 swiftc $FLAGS -o build/Vitals Sources/Core/Model.swift Sources/Core/Fans.swift Sources/Core/SMC.swift Sources/App/*.swift
 
 rm -rf $APP

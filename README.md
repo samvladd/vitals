@@ -125,6 +125,21 @@ Safari → Share → **Add to Home Screen**; it opens full-screen like an app.
   go back to **Auto** 30 seconds after the last page closes, or 90 seconds after a page stops checking
   in (phone locked), and the 95 °C ceiling still applies.
 
+**Tap any card for more.** CPU, Memory, Thermal, GPU, Fan and Storage open their history for 1 h,
+24 h and 14 d from the per-minute log, with the detail behind them: each core, where the memory goes
+and which processes hold it, every temperature sensor. Storage adds:
+
+- **"Full in about N days"**, from the free space logged each minute.
+- **What's using the space**, measured only when you tap, at most once an hour, capped at 45 s. It
+  measures your own folders and your apps' (developer tools, caches, app support, `/Applications`).
+  It never opens the places macOS guards with a permission prompt (Desktop, Documents, Downloads,
+  Music, Movies, Pictures, the Trash, other apps' data, Apple's own data in Library) or cloud
+  folders, so a Mac nobody is sitting at is never left waiting on a dialog. A folder that still
+  stalls is abandoned and never opened again. Giving `vitals-agent` Full Disk Access adds Desktop,
+  Documents and Downloads; it is optional.
+- **SSD health**, the drive's own report (NVMe SMART): wear, data written, spare blocks, errors.
+  No root needed.
+
 | While a page is open (Mac mini, M4 Pro) | CPU | Memory |
 | --- | --- | --- |
 | `vitals-agent serve` | ~2% of one core | ~6.5 MB |

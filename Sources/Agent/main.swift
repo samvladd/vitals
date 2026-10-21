@@ -145,13 +145,14 @@ func write(_ b: [Snapshot], minute: Int) {
     let t = Double(minute * 60)
     let cols: [Double] = [t, mean(w), w.max() ?? 0, mean(b.compactMap(\.cpu)), mean(b.compactMap(\.gpu)),
                           mean(b.compactMap(\.tCPU)), mean(b.compactMap { $0.fans.first?.rpm }),
-                          mean(b.map(\.memUsed)), mean(b.map(\.swapUsed)), Double(b.count * 10)]
+                          mean(b.map(\.memUsed)), mean(b.map(\.swapUsed)), Double(b.count * 10),
+                          b.last?.volumes.first(where: \.boot)?.free ?? 0]
     let line = cols.map { $0 == $0.rounded() ? String(Int($0)) : String(format: "%.2f", $0) }.joined(separator: ",") + "\n"
     let file = logDir.appendingPathComponent(dayFormat.string(from: Date(timeIntervalSince1970: t)) + ".csv")
     if let h = try? FileHandle(forWritingTo: file) {
         h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
     } else {
-        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds\n" + line).write(to: file, atomically: true, encoding: .utf8)
+        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free\n" + line).write(to: file, atomically: true, encoding: .utf8)
     }
     // Keep a year.
     if minute % 1440 == 0, let files = try? FileManager.default.contentsOfDirectory(atPath: logDir.path) {
@@ -174,7 +175,8 @@ func loadHistory(hours: Double) -> History {
             guard c.count >= 10 else { continue }
             wh += c[1] * c[9] / 3600; peak = max(peak, c[2]); n += 1
             if c[0] >= since {
-                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: c[5], fan: c[6], mem: c[7], swap: c[8]))
+                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: c[5], fan: c[6], mem: c[7], swap: c[8],
+                                   free: c.count > 10 && c[10] > 0 ? c[10] : nil))
             }
         }
         days.append(DayTotal(day: day, wh: wh, peak: peak, minutes: n))

@@ -2,7 +2,7 @@ import Foundation
 
 // The wire format between the agent (on each Mac) and the menu bar app: one JSON object per line.
 
-let vitalsVersion = "1.0.6"
+let vitalsVersion = "1.0.7"
 
 struct Fan: Codable, Equatable {
     var rpm: Double
@@ -110,6 +110,7 @@ struct LogRow: Codable {
     var fan: Double
     var mem: Double      // bytes used
     var swap: Double
+    var free: Double?    // bytes free on the boot volume; logged from 1.0.7
 }
 
 struct DayTotal: Codable {

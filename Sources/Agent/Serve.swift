@@ -21,7 +21,8 @@ func coarse(_ h: History, every step: Double) -> History {
         guard let first = group.first else { return }
         func mean(_ k: KeyPath<LogRow, Double>) -> Double { group.reduce(0) { $0 + $1[keyPath: k] } / Double(group.count) }
         out.append(LogRow(t: (first.t / step).rounded(.down) * step, w: mean(\.w), wMax: group.map(\.wMax).max() ?? 0,
-                          cpu: mean(\.cpu), gpu: mean(\.gpu), temp: mean(\.temp), fan: mean(\.fan), mem: mean(\.mem), swap: mean(\.swap)))
+                          cpu: mean(\.cpu), gpu: mean(\.gpu), temp: mean(\.temp), fan: mean(\.fan), mem: mean(\.mem), swap: mean(\.swap),
+                          free: group.compactMap(\.free).last))
         group = []
     }
     for r in h.rows {
@@ -252,6 +253,12 @@ final class WebServer {
         case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info)}")
         case ("GET", "/events"): watch(c)
         case ("GET", "/history"): history(r, c)
+        case ("GET", "/ssd"):
+            DispatchQueue.global(qos: .utility).async {
+                let body = ssdHealth().map(json) ?? "null"
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
+        case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
@@ -292,7 +299,7 @@ final class WebServer {
 
     private func housekeeping() {
         let now = Date()
-        if !watchers.isEmpty { lastBusy = now }
+        if !watchers.isEmpty || SpaceScanner.shared.busy { lastBusy = now }
         if driver.policy != "auto",
            now.timeIntervalSince(lastAlive) > Self.lease || emptySince.map({ now.timeIntervalSince($0) > Self.grace }) == true {
             driver.set("auto")
@@ -304,10 +311,11 @@ final class WebServer {
     // MARK: history and fans
 
     private func history(_ r: Request, _ c: Conn) {
-        let hours: Double = ["10m": 1, "1h": 1, "24h": 24, "14d": 0][r.query["range"] ?? ""] ?? 1
+        let hours: Double = ["10m": 1, "1h": 1, "24h": 24, "14d": 336][r.query["range"] ?? ""] ?? 1
         DispatchQueue.global(qos: .utility).async {
             let h = loadHistory(hours: hours)
-            let body = json(hours >= 24 ? coarse(h, every: 300) : h)
+            // About 300 points whatever the range: five-minute means for a day, hourly for two weeks.
+            let body = json(hours > 24 ? coarse(h, every: 3600) : hours > 1 ? coarse(h, every: 300) : h)
             DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
         }
     }
