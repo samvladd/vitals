@@ -282,6 +282,11 @@ final class WebServer {
             guard let i = try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)) else { return send(c, 500, json: "null") }
             send(c, 200, json: json(Fleet.summary(info: i)))
         case ("GET", "/history"): history(r, c)
+        case ("GET", "/timeline"):          // Timeline.swift: one day of the log, read off the main queue
+            DispatchQueue.global(qos: .utility).async {
+                let body = json(Timeline.day(r.query["day"]))
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
         case ("GET", "/ssd"):
             DispatchQueue.global(qos: .utility).async {
                 let body = ssdHealth().map(json) ?? "null"

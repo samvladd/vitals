@@ -125,6 +125,7 @@ func stream() -> Never {
 func logForever() -> Never {
     try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
     let sampler = Sampler(procs: false)
+    let procLog = ProcLog()                     // the timeline's apps, one scan a minute (Timeline.swift)
     var bucket: [Snapshot] = []
     var minute = Int(Date().timeIntervalSince1970 / 60)
     let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -133,7 +134,7 @@ func logForever() -> Never {
     timer.setEventHandler {
         let s = sampler.sample()
         let m = Int(s.t / 60)
-        if m != minute, !bucket.isEmpty { write(bucket, minute: minute); bucket = [] }
+        if m != minute, !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute); bucket = [] }
         minute = m
         bucket.append(s)
     }
@@ -157,7 +158,7 @@ func write(_ b: [Snapshot], minute: Int) {
     } else {
         try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power\n" + line).write(to: file, atomically: true, encoding: .utf8)
     }
-    // Keep a year.
+    // Keep a year. Names start with the date, so the timeline's YYYY-MM-DD.procs.jsonl go with their CSV.
     if minute % 1440 == 0, let files = try? FileManager.default.contentsOfDirectory(atPath: logDir.path) {
         let cutoff = dayFormat.string(from: Date(timeIntervalSinceNow: -366 * 86400))
         for f in files where f < cutoff { try? FileManager.default.removeItem(at: logDir.appendingPathComponent(f)) }
