@@ -241,6 +241,17 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
   #chart { height: 210px; }
   body.away main { grid-template-columns: 1fr; }
 }
+/* ---------- Battery care (MacBooks only; battery feature) ---------- */
+#batteryCard { order: 1; }
+body.away #batteryCard { display: none; }
+#batteryCard .mid { margin: 8px 0 10px; }
+.bmeter { position: relative; }
+.bmeter .lim { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); }
+.limits { display: flex; margin-top: 12px; }
+.limits button { padding: 0 6px; }
+#bErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
+#bErr:empty { display: none; }
+/* ---------- end battery care ---------- */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -276,6 +287,8 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
       <div class="bar" id="split"></div>
       <div class="legend" id="legend"></div>
     </section>
+    <!-- Battery care: shown only when the Mac on screen has a battery -->
+    <section class="card tap" id="batteryCard" data-detail="battery" hidden></section>
     <section class="card" id="fanCard">
       <div class="row"><div><h2 id="fanTitle" style="display:inline">Fan</h2> <button class="link" data-detail="fan">History<i class="more">›</i></button></div>
         <div class="seg" id="modes" style="width:216px"><button data-m="auto">Auto</button><button data-m="fixed">Fixed</button><button data-m="curve">Curve</button></div>
@@ -389,7 +402,7 @@ const now = () => Date.now() / 1000;
 function took(h, s) {
   h.snap = s; h.seen = s.t; h.state = 'live';
   h.live.push({ t: s.t, w: s.wSystem, cpu: s.cpu, gpu: s.gpu, temp: s.tCPU, fan: s.fans[0]?.rpm,
-                mem: s.memUsed, swap: s.swapUsed, free: bootOf(s)?.free });
+                mem: s.memUsed, swap: s.swapUsed, free: bootOf(s)?.free, bat: s.battery?.percent });
   while (h.live.length && s.t - h.live[0].t > 900) h.live.shift();
   if (isPeer(h) && s.t - (fleetSeen[h.key]?.seen || 0) > 60) remember(h);
 }
@@ -484,6 +497,7 @@ function render() {
   power(h, s);
   cells(s);
   fanCard(h, s);
+  batteryCard(h, s);     // battery care
   procs(s);
   renderApps();
   renderDetail();
@@ -813,6 +827,7 @@ function openDetail(kind) {
   $('dChart').hoverX = null; lastExtra = '';
   const h = cur();
   if (kind === 'disk') { loadSSD(h); loadSpace(h, false); }
+  KINDS[kind].open?.(h);     // battery care loads its own history
   if (!$('sheet').open) { $('sheet').showModal(); $('sheet').focus(); }
   document.documentElement.classList.add('locked');
   loadHistory(st.drange);
@@ -827,7 +842,7 @@ document.addEventListener('click', e => {
 $('dRanges').addEventListener('click', e => {
   const i = [...$('dRanges').children].indexOf(e.target.closest('button'));
   if (i < 0) return;
-  st.drange = i + 1; $('dChart').hoverX = null; loadHistory(st.drange); renderDetail();
+  st.drange = i + 1; $('dChart').hoverX = null; loadHistory(st.drange); KINDS[st.detail]?.open?.(cur()); renderDetail();
 });
 $('dExtra').addEventListener('click', e => { if (e.target.closest('[data-act=measure]')) loadSpace(cur(), true); });
 
@@ -851,7 +866,7 @@ function renderDetail() {
   $('dTitle').textContent = `${K.title} · ${shortName(h)}`;
   $('dNow').innerHTML = s ? K.now(s) : '—';
   [...$('dRanges').children].forEach((b, i) => b.classList.toggle('on', i + 1 === st.drange));
-  $('dSub').innerHTML = kind === 'disk' ? forecast(h, s) : '';
+  $('dSub').innerHTML = K.sub ? K.sub(h, s) : kind === 'disk' ? forecast(h, s) : '';
   drawDetailChart();
   const extra = s ? EXTRA[kind](h, s) : '';
   if (extra !== lastExtra) { $('dExtra').innerHTML = extra; lastExtra = extra; }   // unchanged HTML keeps taps and scroll intact
@@ -860,7 +875,7 @@ function renderDetail() {
 function drawDetailChart() {
   const K = KINDS[st.detail];
   if (!K) return;
-  const h = cur(), s = h.snap, main = seriesOf(h, K.key, st.drange);
+  const h = cur(), s = h.snap, main = K.series ? K.series(h, st.drange) : seriesOf(h, K.key, st.drange);
   // Free space is a new column: until the log has some, say so rather than draw a dot at "now".
   if (K.key === 'free' && !(h.hist[RANGES[st.drange]]?.rows || []).some(r => r.free != null)) main.pts = [];
   const lines = [{ pts: main.pts, color: ACC, fill: true }];
@@ -965,6 +980,128 @@ function ssdCard(h) {
       ['Spare blocks', `${d.spare}%`], ['Media errors', String(d.mediaErrors)], ['Unexpected power-offs', String(d.unsafeShutdowns)], d.temp != null && ['Temperature', F.temp(d.temp)]])}
     <p class="fine">The drive’s own report (NVMe SMART). “Rated life” is its estimate of wear; most Macs never come close.</p>`, flag);
 }
+
+// ---------- battery care (MacBooks only) ----------
+// The card and its detail: charge, health, charge rate, and the charge limit. GET battery is readable
+// from your other Macs' pages; POST battery only from this Mac's own page (the agent checks).
+// Two ways to hold a limit, chosen by the agent: macOS's own (80-100%) or the SMC battery daemon.
+const B_LIMITS = { macos: [80, 85, 90, 95], smc: [60, 70, 80, 90] };
+async function loadBattery(h, body) {
+  if (h.base == null || h.bcBusy) return;
+  h.bcBusy = true;
+  try {
+    const r = await fetch(h.base + 'battery', body ? { method: 'POST', headers: { 'X-Vitals': '1' }, body } : { cache: 'no-store' });
+    const j = await r.json().catch(() => null);
+    if (j) { h.bc = j; h.bcErr = r.ok ? '' : j.message || 'The Mac refused.'; }
+  } catch { if (body) h.bcErr = 'The Mac did not answer.'; }
+  h.bcBusy = false;
+  render();
+}
+async function loadBatteryHistory(h, range) {
+  const key = RANGES[range];
+  if (h.base == null) return;
+  try {
+    const r = await fetch(`${h.base}battery/history?range=${key}`, { cache: 'no-store' });
+    if (r.ok) { (h.bhist ||= {})[key] = (await r.json()).rows; renderDetail(); }
+  } catch {}
+}
+/** The limit in force: macOS's own, else the daemon's. */
+function batteryLimit(bc) {
+  if (!bc) return null;
+  if (bc.mechanism === 'macos') return bc.native?.enabled ? bc.native.limit : null;
+  return bc.mechanism === 'smc' ? bc.limit ?? null : null;
+}
+function batteryState(b, bc) {
+  const lim = batteryLimit(bc);
+  if (b.charging) return [pill('Charging', 'good'), 'charging'];
+  if (!b.external) return [pill('On battery'), 'on battery'];
+  if (lim && b.percent >= lim - 3) return [pill(`Held at ${lim}%`), 'held'];
+  if (b.held && bc?.native?.optimized && bc.native.holdingAt < 100) return [pill(`Held at ${bc.native.holdingAt}%`), 'held'];
+  return [pill('On power'), 'on power'];
+}
+const bWatts = b => b.batteryWatts == null || Math.abs(b.batteryWatts) < 0.3 ? '' : b.batteryWatts > 0 ? `charging at ${F.wu(b.batteryWatts)}` : `draining ${F.wu(-b.batteryWatts)}`;
+function batteryCard(h, s) {
+  const el = $('batteryCard'), b = s?.battery;
+  el.hidden = !b;
+  if (!b) return;
+  if (!h.bc && !h.bcBusy && !h.bcTried) { h.bcTried = true; loadBattery(h); }
+  const lim = batteryLimit(h.bc), [tag] = batteryState(b, h.bc);
+  const time = b.minutesToFull != null ? `${F.dur(b.minutesToFull * 60)} to full` : b.minutesToEmpty != null ? `${F.dur(b.minutesToEmpty * 60)} left` : '';
+  const html = `<div class="row"><span class="label">Battery<i class="more">›</i></span>${tag}</div>
+    <div class="mid">${Math.round(b.percent)}%${time ? `<small>${time}</small>` : ''}</div>
+    <div class="bmeter">${bar(b.percent / 100, b.percent <= 20 && !b.external ? 'var(--negative)' : 'var(--accent)')}${lim ? `<i class="lim" style="left:${lim}%"></i>` : ''}</div>
+    <div class="note">${[b.health != null && `Health ${F.pct(b.health)}`, b.cycles != null && `${b.cycles} cycles`, bWatts(b)].filter(Boolean).join(' · ')}</div>
+    <div class="note">${lim ? `Charge limit ${lim}%` : 'No charge limit'}${b.temp != null ? ` · ${F.temp(b.temp)}` : ''}</div>`;
+  if (html !== el.dataset.html) { el.innerHTML = html; el.dataset.html = html; }
+}
+setInterval(() => { const h = cur(); if (!document.hidden && h.snap?.battery) loadBattery(h); }, 30000);
+
+KINDS.battery = { title: 'Battery', key: 'bat', top: () => 100, axis: v => v + '%', fmt: F.pct,
+  now: s => s.battery ? `${Math.round(s.battery.percent)}%<small>${batteryState(s.battery, cur().bc)[1]}</small>` : '—',
+  open: h => { loadBatteryHistory(h, st.drange); loadBattery(h); },
+  series: (h, range) => {
+    const end = h.snap?.t ?? now(), from = end - [600, 3600, 86400, 86400 * 14][range], mid = [30, 30, 150, 1800][range];
+    const pts = (h.bhist?.[RANGES[range]] || []).filter(r => r[0] >= from).map(r => ({ t: r[0] + mid, v: r[1] }));
+    const last = pts.length ? pts[pts.length - 1].t : from;
+    return { pts: pts.concat(h.live.filter(p => p.t > last + 30 && p.t >= from && p.bat != null).map(p => ({ t: p.t, v: p.bat }))), from, end };
+  },
+  sub: h => {
+    const rows = h.bhist?.[RANGES[st.drange]];
+    if (!rows) return '';
+    if (!rows.length) return 'Battery history is logged each minute from this version on; it fills in from now.';
+    const step = [60, 60, 300, 3600][st.drange], off = rows.filter(r => r[2] === 0).length * step, low = Math.min(...rows.map(r => r[1]));
+    return `${off ? `On battery for ${F.dur(off)}` : 'On power the whole time'} · lowest ${Math.round(low)}% · ${['', 'last hour', 'last 24 hours', 'last 14 days'][st.drange]}`;
+  } };
+EXTRA.battery = (h, s) => {
+  const b = s.battery;
+  if (!b) return card('Battery', '<p class="empty">This Mac has no battery.</p>');
+  const health = card('Health', kv([
+    ['Holds now, of new', b.health != null ? `${b.health.toFixed(1)}%` : '—'],
+    b.fullMah != null && ['Full charge', `${b.fullMah.toLocaleString('en-US')} of ${b.designMah.toLocaleString('en-US')} mAh`],
+    ['Cycles', b.cycles != null ? `${b.cycles}${b.designCycles ? ` of ${b.designCycles.toLocaleString('en-US')} rated` : ''}` : '—'],
+    b.temp != null && ['Temperature', F.temp(b.temp)]]),
+    b.health == null ? '' : b.health >= 80 ? pill('Normal', 'good') : pill('Service', 'warn'));
+  const power = card('Power', kv([
+    ['Battery', bWatts(b) || 'idle'],
+    b.minutesToFull != null && ['Full in', F.dur(b.minutesToFull * 60)],
+    b.minutesToEmpty != null && ['Empty in', F.dur(b.minutesToEmpty * 60)],
+    b.external && ['Adapter', b.adapterWatts != null ? `${Math.round(b.adapterWatts)} W` : 'connected'],
+    b.inWatts != null && ['From the wall now', F.wu(b.inWatts)]]));
+  return health + power + limitCard(h, b);
+};
+function limitCard(h, b) {
+  const bc = h.bc, peer = isPeer(h);
+  if (!bc) return card('Charge limit', '<p class="empty">Reading…</p>');
+  if (bc.mechanism === 'none') return card('Charge limit', `<p class="fine" style="margin-top:4px">This Mac offers no charge limit Vitals can use: macOS’s own needs macOS 26.4 or later, and this firmware has no SMC charge switch Vitals knows.</p>`);
+  const lim = batteryLimit(bc), can = bc.canChange && !peer && !h.bcBusy;
+  const opts = [null, ...B_LIMITS[bc.mechanism]];
+  if (lim && !opts.includes(lim)) opts.push(lim);
+  const seg = `<div class="seg limits" role="group" aria-label="Charge limit">${opts.map(v =>
+    `<button data-limit="${v ?? 'off'}" class="${v === lim ? 'on' : ''}"${can ? '' : ' disabled'}>${v ? v + '%' : 'Off'}</button>`).join('')}</div>`;
+  const notes = [];
+  if (bc.mechanism === 'macos') {
+    notes.push('macOS’s own charge limit, the same as System Settings › Battery › Charging: it holds while the Mac sleeps or restarts and with Vitals closed, and now and then charges to 100% to stay accurate.');
+    if (bc.native?.optimized) notes.push(`Optimized Battery Charging is on${b.held && bc.native.holdingAt < 100 ? `, holding at ${bc.native.holdingAt}% right now` : ''}.`);
+  } else {
+    const stt = bc.status, says = { holding: 'Charging is stopped at the limit.', charging: 'Charging up to the limit.', unplugged: 'Unplugged.',
+      low: 'Below 20%: always charges.', sleeping: 'Asleep: charging allowed.', off: 'Off: charges to 100%.' };
+    if (!bc.daemon) notes.push('Needs a one-time setup on this Mac: <b>sudo vitals-agent battery install</b>');
+    else if (stt) notes.push(esc(stt.message || says[stt.state] || stt.state));
+    notes.push(`Held through the SMC (${esc(bc.smcKey)}) by a small root daemon while the Mac is awake. Charging comes back on when it stops, before sleep, and below 20%.`);
+  }
+  if (peer) notes.unshift(`Read-only here. Change it from ${esc(shortName(h))}’s own page.`);
+  else if (!bc.canChange) notes.unshift('Only this Mac’s own page can change it.');
+  if (bc.dryRun) notes.push('Test mode: nothing on the Mac is changed.');
+  return card('Charge limit', seg + `<p id="bErr" role="alert">${esc(h.bcErr || '')}</p>`
+    + notes.map(n => `<p class="fine">${n}</p>`).join(''), lim ? pill(`${lim}%`) : pill('Off'));
+}
+$('dExtra').addEventListener('click', e => {
+  const b = e.target.closest('[data-limit]');
+  if (!b || b.disabled || b.classList.contains('on')) return;
+  const h = cur(); h.bcErr = '';
+  loadBattery(h, `limit ${b.dataset.limit}`);
+});
+// ---------- end battery care ----------
 
 // ---------- apps: list, quit and open ----------
 // Only on this Mac's own page, and only from the devices `vitals-agent control on` named; the Mac

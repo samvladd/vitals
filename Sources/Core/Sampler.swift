@@ -170,24 +170,10 @@ final class Sampler {
         }
     }
 
+    /// Parsed in Core/Battery.swift. Newer MacBooks (M5) leave the temperature out of the registry; the SMC has it.
     private func battery() -> Battery? {
-        guard let d = registryProperties("AppleSmartBattery").first, (d["BatteryInstalled"] as? Bool) ?? true,
-              let pct = d["CurrentCapacity"] as? NSNumber else { return nil }
-        let num = { (k: String) in (d[k] as? NSNumber)?.int64Value }
-        let tel = d["PowerTelemetryData"] as? [String: Any]
-        var b = Battery(percent: pct.doubleValue, charging: d["IsCharging"] as? Bool ?? false,
-                        external: d["ExternalConnected"] as? Bool ?? false)
-        b.adapterWatts = ((d["AdapterDetails"] as? [String: Any])?["Watts"] as? NSNumber)?.doubleValue
-        if let mw = (tel?["SystemPowerIn"] as? NSNumber)?.doubleValue { b.inWatts = mw / 1000 }
-        if let mv = num("Voltage"), let ma = num("InstantAmperage") ?? num("Amperage") {
-            b.batteryWatts = Double(mv) * Double(Int32(truncatingIfNeeded: ma)) / 1e6
-        }
-        b.cycles = num("CycleCount").map(Int.init)
-        if let raw = num("AppleRawMaxCapacity") ?? num("NominalChargeCapacity"), let design = num("DesignCapacity"), design > 0 {
-            b.health = Double(raw) / Double(design) * 100
-        }
-        if let m = num("TimeRemaining"), m > 0, m < 6000 { b.minutesLeft = Int(m) }
-        if let t = num("Temperature") { b.temp = Double(t) / 100 }
+        guard let d = registryProperties("AppleSmartBattery").first, var b = Battery(registry: d) else { return nil }
+        if b.temp == nil, let t = smc?.value("TB0T"), t > 0, t < 90 { b.temp = t }
         return b
     }
 

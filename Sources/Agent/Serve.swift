@@ -288,6 +288,8 @@ final class WebServer {
             }
         case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
+        case ("GET", "/battery"), ("GET", "/battery/history"), ("POST", "/battery"):     // BatteryCare.swift
+            BatteryCare.handle(r) { [weak self] code, body in self?.send(c, code, json: body) }
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
              ("POST", "/screen/resolution"):
