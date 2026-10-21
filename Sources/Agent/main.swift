@@ -257,6 +257,7 @@ case "serve": serve()
 case "install-serve": installServe()
 case "control": controlCommand()
 case "screen": screenCommand()
+case "action": actionCommand()
 case "info": emit(machineInfo())
 case "once":
     let s = Sampler(procs: true); _ = s.sample(); usleep(1_000_000); emit(s.sample())
@@ -270,5 +271,5 @@ case "remove-root": removeRoot()
 case "version": print(vitalsVersion)
 case "energy-channels": print(EnergyReport()?.channelNames().joined(separator: "\n") ?? "no IOReport")
 default:
-    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | serve [--port N] [--peer URL] [--allow-origin URL] | install-serve [same] | control [on --from DEVICE,... | off] | screen [on | off] | install-logger | setup-root | remove-root | fan auto | version")
+    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | serve [--port N] [--peer URL] [--allow-origin URL] | install-serve [same] | control [on --from DEVICE,... | off] | screen [on | off] | action [add NAME COMMAND | remove NAME] | install-logger | setup-root | remove-root | fan auto | version")
 }

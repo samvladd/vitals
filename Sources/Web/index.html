@@ -210,6 +210,22 @@ html.locked { overflow: hidden; }
 .ev + .ev { margin-top: 5px; }
 .ev span:last-child { white-space: nowrap; }
 .ev.bad span:first-child { color: var(--warning); }
+/* ---------- Actions: saved commands, one per row; Run takes two taps, like Quit ---------- */
+#actionsCard { order: 6; }
+body.away #actionsCard { display: none; }
+.act { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.act:last-child { border-bottom: 0; }
+.act .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act .sub { display: flex; gap: 6px; color: var(--faint); font-size: 13px; white-space: nowrap; }
+.act .sub > span:first-child { overflow: hidden; text-overflow: ellipsis; }      /* the result shortens; Output stays */
+.act .sub .link { font-size: 13px; flex: none; }
+.act .ok { color: var(--accent); } .act .bad { color: var(--negative); }
+.pillbtn.go, .pillbtn.go:hover { background: var(--accent); color: var(--ground); }
+.out { margin-top: 8px; max-height: 260px; overflow: auto; background: var(--ground); border-radius: 10px; padding: 10px 12px;
+  font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--chart2); }
+#actionsErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
+#actionsErr:empty { display: none; }
+/* ---------- end Actions ---------- */
 a.pillbtn { display: inline-block; color: var(--text); text-decoration: none; margin-top: 12px; }
 #screenBtn { margin-top: 0; }
 input[type=search] { width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px; }
@@ -302,6 +318,13 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
       <p id="appsErr" role="alert"></p>
       <div id="apps"></div>
     </section>
+    <!-- Actions: saved commands, defined on the Mac with `vitals-agent action add` (Actions.swift) -->
+    <section class="card" id="actionsCard" hidden>
+      <div class="row"><h2 id="actionsTitle">Actions</h2></div>
+      <p id="actionsErr" role="alert"></p>
+      <div id="actions"></div>
+    </section>
+    <!-- end Actions -->
   </div>
 </main>
 <dialog id="sheet" class="sheet" aria-labelledby="dTitle" autofocus tabindex="-1">
@@ -486,6 +509,7 @@ function render() {
   fanCard(h, s);
   procs(s);
   renderApps();
+  renderActions();
   renderDetail();
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
 }
@@ -1097,6 +1121,106 @@ $('pList').addEventListener('click', async e => {
   } catch { $('pErr').textContent = 'The Mac did not answer.'; }
   ap.opening = null; renderPicker();
 });
+
+// ---------- actions: saved commands, run with two taps ----------
+// The page names an action only by its id; what it runs was set on the Mac (`vitals-agent action add`),
+// so nothing sent from here can become a command. Shown with the Apps card: same devices, same checks.
+// Polled every second while one runs (elapsed time and output as it comes), otherwise every 15 s so an
+// action just added on the Mac shows up. On the other Mac's tab, only a link to its own page.
+const ac = { state: 'unknown', list: [], ask: null, open: null, err: '', peers: {} };
+const actionRunning = () => ac.list.some(a => a.running);
+
+async function loadActions() {
+  if (st.host !== 'here' || document.hidden) return;
+  try {
+    // The output in full only for the one being read; the rest come as a short glance.
+    const r = await fetch('actions' + (ac.open ? `?output=${encodeURIComponent(ac.open)}` : ''), { cache: 'no-store' });
+    if (r.status === 404) ac.state = 'off';
+    else if (!r.ok) ac.state = 'denied';
+    else { ac.state = 'on'; ac.list = await r.json(); }
+  } catch {}
+  renderActions();
+}
+
+/** How many actions another Mac has (a number, never their names), once a minute while its tab is open. */
+async function peerActions(P) {
+  const c = ac.peers[P.key];
+  if (c && Date.now() - c.at < 60000) return;
+  ac.peers[P.key] = { at: Date.now(), count: c?.count || 0 };
+  try { const r = await fetch(P.base + 'actions/count', { cache: 'no-store' }); if (r.ok) { ac.peers[P.key].count = (await r.json()).count; renderActions(); } } catch {}
+}
+
+let lastActions = '', actionsErrTimer = 0, actionsAskTimer = 0;
+function actionsError(msg) {
+  ac.err = msg; renderActions();
+  clearTimeout(actionsErrTimer); actionsErrTimer = setTimeout(() => { ac.err = ''; renderActions(); }, 6000);
+}
+
+function renderActions() {
+  const card = $('actionsCard'), P = cur(), peer = isPeer(P);
+  if (peer && P.apps && P.state !== 'off') peerActions(P);
+  const count = peer ? ac.peers[P.key]?.count || 0 : ac.list.length;
+  card.hidden = !count || (peer ? !P.apps || P.state === 'off' : ap.state !== 'on' || ac.state !== 'on');
+  if (card.hidden) return;
+  $('actionsTitle').textContent = peer ? `Actions on ${shortName(P)}` : 'Actions';
+  $('actionsErr').textContent = peer ? '' : ac.err;
+  const html = peer ? `<p class="fine" style="margin-top:6px">Run ${count === 1 ? 'its action' : `its ${count} actions`} from ${esc(shortName(P))}’s own page.</p>
+    <a class="pillbtn" href="${esc(P.base)}" rel="noopener">Open ${esc(shortName(P))}’s page<i class="more">›</i></a>`
+    : ac.list.map(actionRow).join('');
+  if (html === lastActions) return;                 // unchanged HTML keeps a tap in flight intact
+  // Keep the open output where the reader left it: following the end, or scrolled back.
+  const was = $('actions').querySelector('.out'), end = !was || was.scrollTop + was.clientHeight >= was.scrollHeight - 4, top = was?.scrollTop;
+  $('actions').innerHTML = html; lastActions = html;
+  const out = $('actions').querySelector('.out');
+  if (out) out.scrollTop = end ? out.scrollHeight : top;
+}
+
+const ranFor = s => s < 0.1 ? 'under 0.1 s' : s < 10 ? s.toFixed(1) + ' s' : s < 60 ? Math.round(s) + ' s' : F.dur(s);
+const elapsed = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function actionRow(a) {
+  const l = a.last, ask = ac.ask === a.id, open = ac.open === a.id;
+  const btn = a.running ? `<button class="pillbtn" data-act="stop" data-id="${esc(a.id)}" aria-label="Stop ${esc(a.name)}">Stop</button>`
+    : `<button class="pillbtn${ask ? ' go' : ''}" data-act="run" data-id="${esc(a.id)}"
+        aria-label="${ask ? `Tap again to run ${esc(a.name)}` : `Run ${esc(a.name)}`}">${ask ? 'Run?' : 'Run'}</button>`;
+  const ok = l && l.exit === 0 && !l.why;
+  // "Stopped" or "Timed out after 10 min"; who stopped it is in the activity log, and the line stays short.
+  const why = l?.why ? l.why[0].toUpperCase() + l.why.slice(1).replace(/ from .*$/, '') + ' · ' : '';
+  const sub = a.running ? `<span class="ok">Running · ${elapsed(a.seconds)}</span>`
+    : l ? `<span><span class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'}</span> ${esc(why)}exit ${l.exit} · ${ranFor(l.seconds)} · ${ago(l.t)}</span>`
+    : '<span>Not run yet</span>';
+  const text = a.running ? a.output : l?.outputTail;
+  const more = a.running || l ? `<button class="link" data-act="out" data-id="${esc(a.id)}" aria-expanded="${open}">${open ? 'Hide output' : 'Output'}<i class="more">${open ? '‹' : '›'}</i></button>` : '';
+  return `<div class="act"><div class="row"><div style="min-width:0"><div class="nm">${esc(a.name)}</div><div class="sub">${sub}${more}</div></div>${btn}</div>`
+    + (open ? `<pre class="out">${text ? esc(text) : a.running ? 'Nothing printed yet.' : 'It printed nothing.'}</pre>` : '') + '</div>';
+}
+
+async function actionPost(what, a) {
+  ac.ask = null;
+  if (what === 'run') ac.open = a.id;              // what you just ran is what you want to watch
+  renderActions();
+  try {
+    const r = await fetch('actions/' + what, { method: 'POST', headers: { 'X-Vitals': '1' }, body: a.id });
+    if (!r.ok) actionsError((await r.json().catch(() => ({}))).error || 'The Mac refused.');
+  } catch { actionsError('The Mac did not answer.'); }
+  loadActions();
+}
+
+$('actions').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  const a = b && ac.list.find(x => x.id === b.dataset.id);
+  if (!a) return;
+  if (b.dataset.act === 'out') { ac.open = ac.open === a.id ? null : a.id; renderActions(); return loadActions(); }
+  if (b.dataset.act === 'stop') return actionPost('stop', a);
+  if (ac.ask === a.id) return actionPost('run', a);
+  ac.ask = a.id; renderActions();
+  clearTimeout(actionsAskTimer);
+  actionsAskTimer = setTimeout(() => { ac.ask = null; renderActions(); }, 4000);
+});
+setInterval(() => { if (actionRunning()) loadActions(); }, 1000);
+setInterval(() => { if (!actionRunning()) loadActions(); }, 15000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadActions(); });
+loadActions();
+// ---------- end actions ----------
 
 // ---------- lifecycle ----------
 document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) { loadHistory(); loadApps(); } });

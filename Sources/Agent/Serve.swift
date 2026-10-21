@@ -292,6 +292,9 @@ final class WebServer {
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
              ("POST", "/screen/resolution"):
             screen(r, c)
+        // Actions (Actions.swift): the count is all another Mac's page may read; the rest is gated there.
+        case ("GET", "/actions/count"): send(c, 200, json: "{\"count\":\(Control.load() == nil ? 0 : Actions.load().count)}")
+        case ("GET", "/actions"), ("POST", "/actions/run"), ("POST", "/actions/stop"): c.origin = nil; let (code, body) = Actions.handle(r); send(c, code, json: body)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
         }
@@ -332,6 +335,7 @@ final class WebServer {
     private func housekeeping() {
         let now = Date()
         if !watchers.isEmpty || SpaceScanner.shared.busy || !Screen.relays.isEmpty { lastBusy = now }
+        if Actions.busy { lastBusy = now }
         Screen.housekeeping()
         // A request still not complete after 10 s is someone holding a connection open: let it go.
         for c in conns.values where !c.parsed && !c.streaming && now.timeIntervalSince(c.born) > 10 { drop(c) }
