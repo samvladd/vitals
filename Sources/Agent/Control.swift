@@ -29,6 +29,9 @@ enum Control {
         var screen: Bool? = nil           // the Screen page (Screen.swift), off unless `screen on`
     }
 
+    /// The Screen page's address, for the menu bar app's Screen button; nil while Screen is off.
+    static func screenURL() -> String? { load().flatMap { $0.screen == true ? "https://\($0.host)/screen/" : nil } }
+
     static func load() -> Config? { (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(Config.self, from: $0) } }
 
     enum Gate { case off, refused(String), allowed(device: String) }

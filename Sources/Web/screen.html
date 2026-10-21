@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="../icon.png">
 <link rel="apple-touch-icon" href="../apple-touch-icon.png">
 <style>
@@ -183,7 +184,7 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
 <div id="menu" hidden role="menu">
   <button data-a="fit" role="menuitem">Fit to screen <span id="zoomNow">100%</span></button>
   <button data-a="zoom2" role="menuitem">Zoom to 2×</button>
-  <button data-a="sharp" role="menuitem"><b id="sharpLabel" style="font-weight:400">Picture: faster</b> <span id="sharpNote">1x</span></button>
+  <button data-a="sharp" role="menuitem"><b id="sharpLabel" style="font-weight:400">Picture: faster</b> <span id="sharpNote"></span></button>
   <hr>
   <button data-a="spotlight" role="menuitem">Spotlight <span>⌘ Space</span></button>
   <button data-a="switcher" role="menuitem">Switch app <span>⌘ Tab</span></button>
@@ -192,7 +193,8 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   <button data-a="paste" role="menuitem">Paste <span>⌘ V</span></button>
   <button data-a="quit" role="menuitem">Quit app <span>⌘ Q</span></button>
   <hr>
-  <button data-a="type" role="menuitem">Type text from this phone…</button>
+  <button data-a="full" role="menuitem" id="fullItem">Full screen <span>⌃⌘F</span></button>
+  <button data-a="type" role="menuitem" id="typeItem">Type text from this phone…</button>
   <button data-a="stats" role="menuitem">Show speed <span id="statsNote">off</span></button>
   <button data-a="disconnect" class="danger" role="menuitem">Disconnect</button>
 </div>
@@ -225,6 +227,19 @@ const S = {
   stats: store.get('screenStats', '0') === '1',
 };
 $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off';
+
+// ---------- the pointer on a computer ----------
+// noVNC hides your own pointer over the picture and shows the shape the Mac sends instead. Screen Sharing
+// doesn't send one to browsers, which would leave no pointer at all: noVNC's fallback for that ("dot")
+// becomes a normal arrow, used only while the Mac's own shape is missing.
+RFB.cursors.dot = (() => {
+  const w = 13, h = 20, c = document.createElement('canvas'), g = c.getContext('2d');
+  c.width = w; c.height = h;
+  g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 1.1; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(1, 1); g.lineTo(1, 15.5); g.lineTo(4.6, 12.2); g.lineTo(7.1, 18.2); g.lineTo(9.6, 17.1);
+  g.lineTo(7.1, 11.3); g.lineTo(12, 11.2); g.closePath(); g.fill(); g.stroke();
+  return { rgbaPixels: new Uint8Array(g.getImageData(0, 0, w, h).data.buffer), w, h, hotx: 1, hoty: 1 };
+})();
 
 // ---------- speed: count what arrives on the socket noVNC opens ----------
 const meter = { bytes: 0, msgs: 0 };
@@ -276,11 +291,13 @@ async function connect() {
   rfb.resizeSession = false;
   rfb.background = '#000';
   rfb.focusOnClick = !touchDevice;
+  rfb.showDotCursor = !touchDevice;           // the arrow above; on a phone the trackpad draws its own
   rfb.viewOnly = false;
   rfb.addEventListener('connect', onConnect);
   rfb.addEventListener('disconnect', onDisconnect);
   rfb.addEventListener('credentialsrequired', e => askCredentials(e.detail.types));
   rfb.addEventListener('securityfailure', () => { S.creds = null; S.endedBy = 'signin'; S.signinError = 'That didn’t work. Check the password and try again.'; });
+  rfb.addEventListener('clipboard', e => offerClipboard(e.detail.text));
   rfb.addEventListener('desktopname', e => { if (e.detail.name) $('name').textContent = S.mac; });
 }
 
@@ -596,6 +613,24 @@ el.addEventListener('pointercancel', e => {
 // Direct mode and the desktop: noVNC handles the pointer itself; count it as activity.
 $('stage').addEventListener('pointerdown', touched, true);
 $('stage').addEventListener('pointermove', touched, { capture: true, passive: true });
+// Zoomed in with a mouse: push against an edge of the window to move around, faster the closer you get.
+$('stage').addEventListener('pointermove', e => {
+  if (touchDevice || S.zoom <= 1) return;
+  const v = $('view'), r = v.getBoundingClientRect(), m = 48;
+  const push = d => d < m ? (m - d) / m : 0;
+  const dx = push(r.right - e.clientX) - push(e.clientX - r.left), dy = push(r.bottom - e.clientY) - push(e.clientY - r.top);
+  S.edge = { dx, dy };
+  if ((dx || dy) && !S.edgeRaf) {
+    const step = () => {
+      const { dx, dy } = S.edge || {};
+      if (!dx && !dy) { S.edgeRaf = 0; return; }
+      v.scrollLeft += dx * 18; v.scrollTop += dy * 18;
+      S.edgeRaf = requestAnimationFrame(step);
+    };
+    S.edgeRaf = requestAnimationFrame(step);
+  }
+}, { passive: true });
+$('view').addEventListener('pointerleave', () => { S.edge = null; });
 $('stage').addEventListener('wheel', touched, { capture: true, passive: true });
 document.addEventListener('keydown', e => { if (!touchDevice) touched(); }, true);
 
@@ -714,12 +749,35 @@ $('menu').addEventListener('click', e => {
     case 'paste': cmd(keysyms.lookup(118)); break;
     case 'quit': cmd(keysyms.lookup(113)); break;
     case 'stats': S.stats = !S.stats; store.set('screenStats', S.stats ? '1' : '0'); $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off'; break;
+    case 'full':
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      else document.documentElement.requestFullscreen?.().catch(() => toast('This browser can’t go full screen here'));
+      break;
     case 'type': show('scrim'); show('typer'); $('typeText').focus(); break;
     case 'disconnect': disconnect(); break;
   }
 });
 $('typer').addEventListener('submit', e => { e.preventDefault(); typeText($('typeText').value); $('typeText').value = ''; hide('typer'); hide('scrim'); });
 $('typeCancel').addEventListener('click', () => { hide('typer'); hide('scrim'); });
+
+// Full screen only where the browser offers it (not on iPhone, where the Home Screen app is already full).
+$('fullItem').hidden = !document.documentElement.requestFullscreen || touchDevice;
+if (!touchDevice) $('typeItem').firstChild.textContent = 'Type text from this computer…';
+document.addEventListener('keydown', e => {          // ⌃⌘F, as in Mac apps; never sent on to the Mac
+  if (e.ctrlKey && e.metaKey && e.code === 'KeyF') { e.preventDefault(); e.stopPropagation(); $('menu').querySelector('[data-a=full]').click(); }
+}, true);
+
+// The Mac's clipboard, if Screen Sharing shares it with this page: offer it here, one tap to copy.
+function offerClipboard(text) {
+  if (!text || text === S.lastClip) return;
+  S.lastClip = text;
+  const t = $('toast'); t.textContent = ''; t.classList.remove('warn');
+  const b = document.createElement('button');
+  b.textContent = 'Copy here'; b.style.cssText = 'margin-left:10px;color:var(--accent);font-weight:600';
+  b.onclick = () => navigator.clipboard?.writeText(text).then(() => toast('Copied to this device'), () => toast('Couldn’t copy'));
+  t.append(`Copied on ${S.mac}: “${text.length > 40 ? text.slice(0, 40) + '…' : text}”`, b);
+  show('toast'); clearTimeout(toastTimer); toastTimer = setTimeout(() => hide('toast'), 8000);
+}
 
 // Desktop: ctrl/⌘ + wheel or the keys + and - zoom too, without reaching the Mac.
 $('view').addEventListener('wheel', e => {

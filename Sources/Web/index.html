@@ -943,7 +943,8 @@ function renderApps() {
   for (const b of $('appSort').children) b.classList.toggle('on', b.dataset.k === ap.sort);
   let html;
   if (peer) html = `<p class="fine" style="margin-top:6px">Quit and open ${esc(shortName(st.peer))}’s apps from its own page.</p>
-    <a class="pillbtn" href="${esc(st.peer.base)}" rel="noopener">Open ${esc(shortName(st.peer))}’s page<i class="more">›</i></a>`;
+    <a class="pillbtn" href="${esc(st.peer.base)}" rel="noopener">Open ${esc(shortName(st.peer))}’s page<i class="more">›</i></a>`
+    + (st.peer.screen ? ` <a class="pillbtn" href="${esc(st.peer.base)}screen/" rel="noopener">${esc(shortName(st.peer))}’s screen<i class="more">›</i></a>` : '');
   else if (ap.state === 'denied') html = `<p class="empty">${esc(ap.denied)}</p>`;
   else {
     const list = [...ap.list].sort((a, b) => b[ap.sort] - a[ap.sort]);
@@ -1052,7 +1053,7 @@ async function probePeer() {
   if (!st.peer.base) return;
   try {
     const c = await fetch(st.peer.base + 'config', { cache: 'no-store' }).then(r => r.json());
-    st.peer.info = c.info; st.peer.apps = !!c.apps; store.set('peerInfo', JSON.stringify(c.info));
+    st.peer.info = c.info; st.peer.apps = !!c.apps; st.peer.screen = !!c.screen; store.set('peerInfo', JSON.stringify(c.info));
     if (st.peer.state !== 'live') st.peer.state = 'up';
   } catch { if (st.peer.state !== 'live') st.peer.state = 'off'; }
   render();

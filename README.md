@@ -25,6 +25,19 @@ subscription or a cloud account.
 | **The Mac's screen on your phone**: see it and use it, with trackpad gestures, a magnifier, a keyboard with ⌘ ⌥ ⌃ ⇧, sideways | A 57 KB viewer, ~1 MB on the Mac while connected, nothing after |
 | No App Store, no developer account, no cloud service, no port open to the internet | Your own [Tailscale](https://tailscale.com) network |
 
+What you can do with it:
+
+- **From bed, on your phone:** see that the mini is at 98 °C, find the app behind it, and quit it in
+  two taps.
+- **From a café, on cellular:** open the mini's screen, answer a dialog nobody was there to
+  see, and drag a file into a folder, with a trackpad under your thumb and a magnifier over the pointer.
+- **From your MacBook:** click **Screen** in the Vitals menu, or keep a "Mac mini" app in the Dock
+  that opens straight onto its screen, full screen, pinch to zoom.
+- **Before you leave the house:** set the fans to a quiet curve for an overnight job, and see in the
+  morning how many watt-hours it took.
+- **Any time:** a year of power, temperature and memory history, and a log of every app quit, every
+  screen session and every refused attempt.
+
 What makes it unusual:
 
 - **Zero cost when nobody is looking.** macOS's launchd holds the dashboard's port and starts the
@@ -243,8 +256,19 @@ On a phone:
 The keyboard button opens the phone's keyboard with a row for esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows (the
 modifiers stay down for the next key: ⌘ then C copies). The menu has Spotlight, app switching,
 Mission Control and a box to paste text that is then typed on the Mac. Turn the phone sideways for
-the full picture with the controls in a rail beside it. On a computer the mouse and keyboard just
-work. Lock the phone or switch apps and come back: it reconnects by itself.
+the full picture with the controls in a rail beside it. Lock the phone or switch apps and come back:
+it reconnects by itself.
+
+From another Mac:
+
+- **Screen** in the Vitals menu (shown for any Mac with Screen on) opens it in your browser.
+- In Safari, **File › Add to Dock** makes it an app of its own: a "Mac mini" in the Dock that opens
+  straight onto its screen, in its own window.
+- The mouse and keyboard just work, with your own pointer always visible. Pinch the trackpad to zoom
+  in, push against an edge to move around, and **⌃⌘F** for full screen. If the Mac shares what you
+  copy there, Vitals offers to copy it here too.
+- The browser keeps a few shortcuts for itself (⌘Q, ⌘W, ⌘Tab, ⌘Space); the menu has Spotlight,
+  app switching and Quit for the Mac.
 
 **Faster by default.** A Retina screen is four pixels for each point. While you are connected, the
 Mac switches to the matching non-Retina mode (same size, windows stay put), so Screen Sharing sends
@@ -272,6 +296,9 @@ about 1 MB while a session is open; a minute after you leave, nothing is running
 | Input to screen, 4K | 0.4 ms | 0.8 ms |
 | Vitals' server memory during a 4K session | — | 3.3 MB |
 | Relay CPU at 126 MB/s (far beyond real use) | — | 4% of one core |
+
+Every session's line in the log ends with what it moved, as a benchmark from real use: "7.4 MB from
+the Mac, 0.45 MB/s on average, 0.63 MB/s at most". Sizes and rates only, never what was on screen.
 
 How it was tested: against the real Screen Sharing on two Macs up to Apple's sign-in, and end to end
 against a stand-in VNC server that logs every click and key it receives. Every gesture and key was

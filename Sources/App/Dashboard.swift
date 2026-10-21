@@ -609,10 +609,14 @@ final class Dashboard: Canvas {
         if let s, s.load.count == 3 { info += " · load " + s.load.map { String(format: "%.1f", $0) }.joined(separator: " / ") }
         drawText(info.isEmpty ? "Logging every minute on each Mac" : info + " · logging every minute", Theme.font(12), Theme.faint, pad, y + 10)
         var x = Self.width - pad
-        for (id, name, action) in [("quit", "Quit", onQuit), ("settings", "Settings", onSettings), ("logs", "Log files", onOpenLogs)] {
+        // Screen: that Mac's screen in the browser, when it has `vitals-agent screen on`.
+        let screen = l.info?.screen.flatMap(URL.init(string:)).map { url in { NSWorkspace.shared.open(url); () } }
+        let buttons: [(String, String, (() -> Void)?)] = [("quit", "Quit", onQuit), ("settings", "Settings", onSettings),
+                                                          ("logs", "Log files", onOpenLogs)] + (screen.map { [("screen", "Screen", $0)] } ?? [])
+        for (id, name, action) in buttons {
             let f = Theme.font(12, .medium), w = textWidth(name, f)
             let hov = hit(NSRect(x: x - w - 8, y: y + 2, width: w + 16, height: 30), "foot.\(id)") { _ in action?() }
-            drawText(name, f, hov ? Theme.text : Theme.muted, x, y + 10, align: .right)
+            drawText(name, f, id == "screen" ? (hov ? Theme.text : Theme.accent) : hov ? Theme.text : Theme.muted, x, y + 10, align: .right)
             x -= w + 20
         }
     }
