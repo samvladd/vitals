@@ -123,7 +123,7 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 #fanErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
 #fanErr:empty { display: none; }
 
-.procs .head { display: grid; grid-template-columns: 72px 64px; gap: 8px; text-align: right; color: var(--faint); font-size: 13px; }
+.procs .head, .cols { display: grid; grid-template-columns: 72px 64px; gap: 8px; text-align: right; color: var(--faint); font-size: 13px; }
 .proc { display: grid; grid-template-columns: 1fr 72px 64px; gap: 8px; align-items: baseline; padding: 10px 0 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
 .proc:last-child { border-bottom: 0; }
 .proc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -140,6 +140,48 @@ body.away #powerCard, body.away #gridCard, body.away #fanCard, body.away #procCa
 
 footer { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 13px; padding: 14px 2px 0; }
 
+/* Tap a card for its history. */
+.tap { cursor: pointer; transition: background .15s; }
+.tap:hover { background: #191b1f; }
+.tap:active { background: #1c1e22; }
+.more { font-style: normal; color: var(--chart3); margin-left: 5px; }
+.link { color: var(--muted); font-size: 14px; }
+.link:hover { color: var(--text); }
+
+dialog#sheet { border: 0; padding: 0; margin: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
+  background: var(--ground); color: var(--text); overscroll-behavior: contain; }
+dialog#sheet:focus { outline: none; }
+dialog#sheet::backdrop { background: rgba(0, 0, 0, .6); }
+.sheet-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px; background: var(--ground); border-bottom: 1px solid var(--line); }
+.sheet-head h2 { font-size: 17px; }
+#done { font-weight: 600; padding: 6px 2px; }
+.sheet-body { display: flex; flex-direction: column; gap: 12px; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+#dSub { color: var(--muted); font-size: 14px; margin-top: 8px; }
+#dSub:empty { display: none; }
+#dChart { display: block; width: 100%; height: 190px; margin: 14px 0 6px; touch-action: pan-y; cursor: crosshair; }
+html.locked { overflow: hidden; }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; margin-top: 12px; font-size: 15px; }
+.kv span { color: var(--muted); } .kv b { text-align: right; font-weight: 500; }
+.srow { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: baseline; padding: 10px 0 6px; border-bottom: 1px solid var(--line); }
+.srow:last-child { border-bottom: 0; }
+.srow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow b { font-weight: 500; }
+.srow .use { grid-column: 1 / -1; height: 2px; border-radius: 1px; background: var(--chart2); margin-top: -2px; }
+.srow.sub { padding: 6px 0 4px 14px; font-size: 14px; color: var(--muted); border: 0; }
+.srow.sub .use { background: var(--chart3); }
+.pillbtn { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 5px 12px; background: var(--raised); }
+.pillbtn:hover:not(:disabled) { background: #2e3238; }
+.pillbtn:disabled { color: var(--faint); cursor: default; }
+.cores.tall { height: 84px; gap: 3px; margin-top: 12px; }
+.fine { color: var(--faint); font-size: 13px; margin-top: 10px; }
+
+@media (min-width: 900px) {
+  dialog#sheet { width: 760px; height: auto; max-height: 88vh; margin: auto; border-radius: 18px; border: 1px solid var(--line); }
+  .sheet-head { padding-top: 14px; }
+  .sheet-body { padding: 20px; }
+  #dChart { height: 230px; }
+}
 @media (min-width: 900px) {
   body { max-width: 1160px; padding: 0 32px 32px; }
   .brand, #stamp { height: 68px; }
@@ -192,7 +234,7 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
       <div class="legend" id="legend"></div>
     </section>
     <section class="card" id="fanCard">
-      <div class="row"><h2 id="fanTitle">Fan</h2>
+      <div class="row"><div><h2 id="fanTitle" style="display:inline">Fan</h2> <button class="link" data-detail="fan">History<i class="more">›</i></button></div>
         <div class="seg" id="modes" style="width:216px"><button data-m="auto">Auto</button><button data-m="fixed">Fixed</button><button data-m="curve">Curve</button></div>
       </div>
       <div id="fans"></div>
@@ -202,9 +244,9 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
   </div>
   <div class="col">
     <section class="card grid" id="gridCard">
-      <div class="cell" id="cpu"></div><div class="cell" id="mem"></div>
-      <div class="cell" id="therm"></div><div class="cell" id="gpu"></div>
-      <div class="cell" id="disk"></div><div class="cell" id="net"></div>
+      <div class="cell tap" id="cpu" data-detail="cpu"></div><div class="cell tap" id="mem" data-detail="mem"></div>
+      <div class="cell tap" id="therm" data-detail="therm"></div><div class="cell tap" id="gpu" data-detail="gpu"></div>
+      <div class="cell tap" id="disk" data-detail="disk"></div><div class="cell" id="net"></div>
     </section>
     <section class="card procs" id="procCard">
       <div class="row"><h2>Using the CPU now</h2><div class="head"><span>CPU</span><span>Memory</span></div></div>
@@ -212,6 +254,19 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
     </section>
   </div>
 </main>
+<dialog id="sheet" aria-labelledby="dTitle" autofocus tabindex="-1">
+  <div class="sheet-head"><h2 id="dTitle"></h2><button id="done">Done</button></div>
+  <div class="sheet-body">
+    <section class="card">
+      <div class="row" style="align-items:flex-end"><div class="big" id="dNow">—</div>
+        <div class="tabs" id="dRanges"><button>1 h</button><button>24 h</button><button>14 d</button></div></div>
+      <p id="dSub"></p>
+      <canvas id="dChart"></canvas>
+      <div class="legend" id="dLegend"></div>
+    </section>
+    <div id="dExtra" style="display:flex;flex-direction:column;gap:12px"></div>
+  </div>
+</dialog>
 <footer><span id="foot"></span><span>Samples only while this page is open</span></footer>
 
 <script>
@@ -224,7 +279,7 @@ const CEILING = 95, CURVE = [50, 85];
 // "here" is the Mac serving this page; "peer" is the other one, read straight from its own address.
 const blank = base => ({ base, info: null, snap: null, live: [], state: 'idle', seen: 0, hist: {}, es: null });
 const st = { host: store.get('host', 'here'), range: +store.get('range', 1), here: blank(''), peer: blank(null),
-             pending: null, dragging: false, err: '', hover: null };
+             pending: null, dragging: false, err: '' };
 if (!['here', 'peer'].includes(st.host)) st.host = 'here';
 if (!(st.range >= 0 && st.range <= 3)) st.range = 1;
 try { st.peer.info = JSON.parse(store.get('peerInfo', 'null')); } catch {}
@@ -252,6 +307,7 @@ const shortName = h => h.info?.model?.split(' (')[0] || (h === st.here ? 'This M
 const guessName = url => { const n = (url || '').toLowerCase();
   return n.includes('macbook') ? 'MacBook' : n.includes('mini') ? 'Mac mini' : n.includes('studio') ? 'Mac Studio' : n.includes('imac') ? 'iMac' : 'Other Mac'; };
 const cur = () => st[st.host];
+const bootOf = s => s?.volumes?.find(v => v.boot) || s?.volumes?.[0];
 const now = () => Date.now() / 1000;
 
 // ---------- data ----------
@@ -259,7 +315,8 @@ const now = () => Date.now() / 1000;
 // while someone looks and not at all otherwise.
 function took(h, s) {
   h.snap = s; h.seen = s.t; h.state = 'live';
-  if (s.wSystem != null) h.live.push({ t: s.t, w: s.wSystem });
+  h.live.push({ t: s.t, w: s.wSystem, cpu: s.cpu, gpu: s.gpu, temp: s.tCPU, fan: s.fans[0]?.rpm,
+                mem: s.memUsed, swap: s.swapUsed, free: bootOf(s)?.free });
   while (h.live.length && s.t - h.live[0].t > 900) h.live.shift();
   if (h === st.peer) store.set('peerSeen', String(s.t));
 }
@@ -279,8 +336,8 @@ function connect() {
   if (document.hidden) shut(cur()); else open(cur());
 }
 
-async function loadHistory() {
-  const h = cur(), key = RANGES[st.range === 0 ? 1 : st.range];
+async function loadHistory(range = st.range) {
+  const h = cur(), key = RANGES[range === 0 ? 1 : range];
   if (h.base == null) return;
   try {
     const r = await fetch(`${h.base}history?range=${key}`, { cache: 'no-store' });
@@ -355,6 +412,7 @@ function render() {
   cells(s);
   fanCard(h, s);
   procs(s);
+  renderDetail();
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
 }
 
@@ -368,8 +426,8 @@ function power(h, s) {
   if (st.range === 3) {
     $('peakL').textContent = '14 days'; $('peak').textContent = days.length ? F.energy(days.reduce((a, d) => a + d.wh, 0)) : '—';
   } else {
-    const { pts, from } = series(h);
-    const peak = Math.max(-1, ...(hist?.rows || []).filter(r => r.t >= from).map(r => r.wMax), ...pts.map(p => p.w));
+    const { pts, from } = seriesOf(h, 'w', st.range);
+    const peak = Math.max(-1, ...(hist?.rows || []).filter(r => r.t >= from).map(r => r.wMax), ...pts.map(p => p.v));
     $('peakL').textContent = 'Peak · ' + LABELS[st.range]; $('peak').textContent = peak >= 0 ? F.wu(peak) : '—';
   }
   const b = s?.battery;
@@ -386,93 +444,115 @@ function power(h, s) {
   drawChart(h);
 }
 
-/** The points for the chosen range, oldest first: logged minutes, then the live readings after them. */
-function series(h) {
+/** One metric for a range, oldest first: logged rows (centred in their bucket), then the live readings after them. */
+function seriesOf(h, key, range) {
   const end = h.snap?.t ?? now();
-  const span = [600, 3600, 86400, 86400 * 14][st.range], from = end - span;
-  const hist = h.hist[RANGES[st.range === 0 ? 1 : st.range]];
-  const pts = (hist?.rows || []).filter(r => r.t >= from).map(r => ({ t: r.t + (st.range === 2 ? 150 : 30), w: r.w }));
+  const span = [600, 3600, 86400, 86400 * 14][range], from = end - span;
+  const hist = h.hist[RANGES[range === 0 ? 1 : range]];
+  const mid = [30, 30, 150, 1800][range];
+  const pts = (hist?.rows || []).filter(r => r.t >= from && r[key] != null).map(r => ({ t: r.t + mid, v: r[key] }));
   const last = pts.length ? pts[pts.length - 1].t : from;
-  return { pts: pts.concat(h.live.filter(p => p.t > last + 30 && p.t >= from)), from, now: end };
+  const live = h.live.filter(p => p.t > last + 30 && p.t >= from && p[key] != null).map(p => ({ t: p.t, v: p[key] }));
+  return { pts: pts.concat(live), from, end };
 }
 
 function nice(max) {
   const raw = Math.max(max, 1) / 2, mag = 10 ** Math.floor(Math.log10(raw));
   return [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw);
 }
+const when = (t, range) => range === 3 ? new Date(t * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : F.clock(t);
 
-function drawChart(h) {
-  const c = $('chart'), dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
-  if (!W) return;
-  if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+function canvas(c) {
+  const dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  if (!W) return null;
+  if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
   const g = c.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
   g.font = '12px -apple-system, system-ui, sans-serif';
-  const plot = { x0: 0, x1: W - 50, y0: 6, y1: H - 22 };
-  const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
-  const msg = text => { g.fillStyle = '#8f9296'; g.textAlign = 'center'; g.fillText(text, pw / 2, ph / 2 + 6); };
+  const P = { x0: 0, x1: W - 54, y0: 6, y1: H - 22 };
+  P.w = P.x1 - P.x0; P.h = P.y1 - P.y0;
+  const msg = text => { g.fillStyle = '#8f9296'; g.textAlign = 'center'; g.fillText(text, P.w / 2, P.h / 2 + 6); };
   const grid = (step, label) => {
     g.strokeStyle = '#23262b'; g.lineWidth = 1; g.fillStyle = '#8f9296'; g.textAlign = 'right';
     for (let k = 0; k <= 2; k++) {
-      const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
-      g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
+      const y = Math.round(P.y1 - k / 2 * P.h) + 0.5;
+      g.beginPath(); g.moveTo(P.x0, y); g.lineTo(P.x1, y); g.stroke();
       g.fillText(label(step * k), W, y + 4);
     }
   };
+  return { g, W, H, P, msg, grid };
+}
 
-  if (st.range === 3) return dayBars(g, h, plot, msg, grid);
-  const { pts, from, now: end } = series(h), span = end - from;
-  const step = nice(Math.max(0, ...pts.map(p => p.w)) * 1.05), top = step * 2;
-  grid(step, v => `${+v.toFixed(1)} W`);
-  for (let k = 0; k <= 3; k++) {
-    const t = from + span * k / 3, x = plot.x0 + pw * k / 3;
-    g.textAlign = k === 0 ? 'left' : k === 3 ? 'right' : 'center';
-    g.fillText(k === 3 ? 'now' : st.range === 0 ? `−${Math.round((end - t) / 60)} m` : F.clock(t), x, H - 4);
+/** Line chart: a two-step grid, time labels, one or more series, and the reading under the finger or pointer. */
+function plot(c, { lines, from, end, range, top, axis, fmt, empty }) {
+  const k = canvas(c);
+  if (!k) return;
+  const { g, W, H, P, msg, grid } = k, span = end - from;
+  const step = top ? top / 2 : nice(Math.max(0, ...lines.flatMap(l => l.pts.map(p => p.v))) * 1.05), tp = step * 2;
+  grid(step, axis);
+  for (let i = 0; i <= 3; i++) {
+    const t = from + span * i / 3, x = P.x0 + P.w * i / 3;
+    g.textAlign = i === 0 ? 'left' : i === 3 ? 'right' : 'center';
+    g.fillText(i === 3 ? 'now' : range === 0 ? `−${Math.round((end - t) / 60)} m` : when(t, range), x, H - 4);
   }
-  if (pts.length < 2) return msg(st.range === 0 ? 'Collecting the first readings…' : 'The log fills from the first minute the agent ran.');
-  const px = t => plot.x0 + (t - from) / span * pw, py = w => plot.y1 - Math.min(w, top) / top * ph;
-  const gap = [120, 180, 900][st.range];
-  const runs = [[]];
-  pts.forEach((p, i) => { if (i && p.t - pts[i - 1].t > gap) runs.push([]); runs[runs.length - 1].push(p); });
-  const fill = g.createLinearGradient(0, plot.y0, 0, plot.y1);
-  fill.addColorStop(0, 'rgba(198,242,78,0.22)'); fill.addColorStop(1, 'rgba(198,242,78,0.02)');
-  for (const run of runs) {
-    g.beginPath();
-    run.forEach((p, i) => i ? g.lineTo(px(p.t), py(p.w)) : g.moveTo(px(p.t), py(p.w)));
-    g.strokeStyle = '#c6f24e'; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
-    g.lineTo(px(run[run.length - 1].t), plot.y1); g.lineTo(px(run[0].t), plot.y1); g.closePath();
-    g.fillStyle = fill; g.fill();
+  if (!lines.some(l => l.pts.length > 1)) return msg(empty);
+  const px = t => P.x0 + (t - from) / span * P.w, py = v => P.y1 - Math.min(Math.max(v, 0), tp) / tp * P.h;
+  const gap = [120, 180, 900, 10800][range];
+  for (const l of lines) {
+    const runs = [[]];
+    l.pts.forEach((p, i) => { if (i && p.t - l.pts[i - 1].t > gap) runs.push([]); runs[runs.length - 1].push(p); });
+    const fill = g.createLinearGradient(0, P.y0, 0, P.y1);
+    fill.addColorStop(0, 'rgba(198,242,78,0.22)'); fill.addColorStop(1, 'rgba(198,242,78,0.02)');
+    for (const run of runs) {
+      if (!run.length) continue;
+      g.beginPath();
+      run.forEach((p, i) => i ? g.lineTo(px(p.t), py(p.v)) : g.moveTo(px(p.t), py(p.v)));
+      g.strokeStyle = l.color; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
+      if (l.fill) { g.lineTo(px(run[run.length - 1].t), P.y1); g.lineTo(px(run[0].t), P.y1); g.closePath(); g.fillStyle = fill; g.fill(); }
+    }
   }
-  if (st.hover != null && st.hover <= plot.x1) {
-    const t = from + (st.hover - plot.x0) / pw * span;
+  const pts = lines[0].pts;
+  if (c.hoverX != null && c.hoverX <= P.x1 && pts.length) {
+    const t = from + (c.hoverX - P.x0) / P.w * span;
     const near = pts.reduce((a, p) => Math.abs(p.t - t) < Math.abs(a.t - t) ? p : a);
-    const x = px(near.t), y = py(near.w);
-    g.strokeStyle = '#6b6b6b'; g.beginPath(); g.moveTo(Math.round(x) + 0.5, plot.y0); g.lineTo(Math.round(x) + 0.5, plot.y1); g.stroke();
+    const x = px(near.t), y = py(near.v);
+    g.strokeStyle = '#6b6b6b'; g.beginPath(); g.moveTo(Math.round(x) + 0.5, P.y0); g.lineTo(Math.round(x) + 0.5, P.y1); g.stroke();
     g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 3.5, 0, 7); g.fill();
-    const label = `${F.clock(near.t, st.range === 0)} · ${F.watts(near.w)} W`;
+    const label = `${range === 3 ? when(near.t, 3) + ' ' + F.clock(near.t) : F.clock(near.t, range === 0)} · ${fmt(near.v)}`;
     g.font = '600 12px -apple-system, system-ui, sans-serif';
-    const tw = g.measureText(label).width + 16, lx = Math.min(Math.max(x - tw / 2, 0), plot.x1 - tw);
-    g.fillStyle = '#24272c'; g.beginPath(); g.roundRect(lx, plot.y0, tw, 22, 11); g.fill();
-    g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(label, lx + tw / 2, plot.y0 + 15);
+    const tw = g.measureText(label).width + 16, lx = Math.min(Math.max(x - tw / 2, 0), P.x1 - tw);
+    g.fillStyle = '#24272c'; g.beginPath(); g.roundRect(lx, P.y0, tw, 22, 11); g.fill();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(label, lx + tw / 2, P.y0 + 15);
   }
 }
 
-function dayBars(g, h, plot, msg, grid) {
+function drawChart(h) {
+  const c = $('chart');
+  if (st.range === 3) return dayBars(c, h);
+  const { pts, from, end } = seriesOf(h, 'w', st.range);
+  plot(c, { lines: [{ pts, color: '#c6f24e', fill: true }], from, end, range: st.range,
+            axis: v => `${+v.toFixed(1)} W`, fmt: v => F.watts(v) + ' W',
+            empty: st.range === 0 ? 'Collecting the first readings…' : 'The log fills from the first minute the agent ran.' });
+}
+
+function dayBars(c, h) {
+  const k = canvas(c);
+  if (!k) return;
+  const { g, P, msg, grid } = k;
   const days = (h.hist['14d']?.days || []).slice(-14);
   if (!days.length) return msg('No days logged yet.');
-  const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
   const step = nice(Math.max(...days.map(d => d.wh)) * 1.05), top = step * 2;
   grid(step, F.energy);
-  const slots = 14, bw = (pw - (slots - 1) * 4) / slots, today = F.day(new Date());
+  const slots = 14, bw = (P.w - (slots - 1) * 4) / slots, today = F.day(new Date());
   days.forEach((d, i) => {
-    const x = plot.x0 + (slots - days.length + i) * (bw + 4), bh = Math.max(2, d.wh / top * ph);
+    const x = P.x0 + (slots - days.length + i) * (bw + 4), bh = Math.max(2, d.wh / top * P.h);
     g.fillStyle = d.day === today ? '#c6f24e' : '#6b6b6b';
-    g.beginPath(); g.roundRect(x, plot.y1 - bh, bw, bh, 2); g.fill();
+    g.beginPath(); g.roundRect(x, P.y1 - bh, bw, bh, 2); g.fill();
     if (i === 0 || i === days.length - 1) {
       const [, m, dd] = d.day.split('-').map(Number);
       g.fillStyle = '#8f9296'; g.textAlign = i === 0 ? 'left' : 'right';
-      g.fillText(d.day === today ? 'today' : new Date(2000, m - 1, dd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), i === 0 ? x : x + bw, plot.y1 + 18);
+      g.fillText(d.day === today ? 'today' : new Date(2000, m - 1, dd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), i === 0 ? x : x + bw, P.y1 + 18);
     }
   });
 }
@@ -485,13 +565,13 @@ function cells(s) {
   if (!s) { [['cpu', 'CPU'], ['mem', 'Memory'], ['therm', 'Thermal'], ['gpu', 'GPU'], ['disk', 'Storage'], ['net', 'Network and disk']].forEach(([id, t]) => $(id).innerHTML = dash(t)); return; }
 
   const e = s.eCores, cores = s.cores.map((v, i) => (i === e && e > 0 ? '<i class="gap"></i>' : '') + `<i><b style="height:${Math.max(4, v)}%"></b></i>`).join('');
-  $('cpu').innerHTML = `<div class="row"><span class="label">CPU</span><span class="note" style="margin:0">load ${s.load[0]?.toFixed(1) ?? '—'}</span></div>
+  $('cpu').innerHTML = `<div class="row"><span class="label">CPU<i class="more">›</i></span><span class="note" style="margin:0">load ${s.load[0]?.toFixed(1) ?? '—'}</span></div>
     <div class="mid">${F.pct(s.cpu)}</div><div class="cores">${cores}</div>
     <div class="note">${e ? `${e} E-cores · ${s.cores.length - e} P-cores` : `${s.cores.length} cores`}</div>`;
 
   const pr = s.pressure >= 4 ? pill('Critical', 'bad') : s.pressure >= 2 ? pill('Warning', 'warn') : pill('Normal');
   const used = s.memUsed, total = Math.max(1, s.memTotal);
-  $('mem').innerHTML = `<div class="row"><span class="label">Memory</span>${pr}</div>
+  $('mem').innerHTML = `<div class="row"><span class="label">Memory<i class="more">›</i></span>${pr}</div>
     <div class="mid">${F.gb(used)}<small>/ ${F.gb(s.memTotal, 0)} GB</small></div>
     <div class="bar"><i style="width:${Math.max(0, used - s.memCompressed) / total * 100}%;background:var(--chart2)"></i><i style="width:${s.memCompressed / total * 100}%;background:var(--chart3)"></i></div>
     <div class="note">${F.gb(s.memCompressed)} GB compressed</div>
@@ -500,11 +580,11 @@ function cells(s) {
   const th = [pill('Nominal'), pill('Fair', 'warn'), pill('Serious', 'bad'), pill('Critical', 'bad')][s.thermal] || '';
   const others = [s.tGPU != null && `GPU ${F.temp(s.tGPU)}`, s.tSSD != null && `SSD ${F.temp(s.tSSD)}`, s.battery?.temp != null && `Battery ${F.temp(s.battery.temp)}`].filter(Boolean);
   const hot = s.tCPU >= 90 ? 'var(--negative)' : s.tCPU >= 80 ? 'var(--warning)' : 'var(--chart2)';
-  $('therm').innerHTML = `<div class="row"><span class="label">Thermal</span>${th}</div>
+  $('therm').innerHTML = `<div class="row"><span class="label">Thermal<i class="more">›</i></span>${th}</div>
     <div class="mid">${F.temp(s.tCPU)}<small>CPU</small></div>${bar(((s.tCPU ?? 30) - 30) / 75, hot)}
     <div class="note">${others.join(' · ') || '&nbsp;'}</div><div class="scale" style="margin-top:1px"><span>30°</span><span>105°</span></div>`;
 
-  $('gpu').innerHTML = `<div class="row"><span class="label">GPU</span></div>
+  $('gpu').innerHTML = `<div class="row"><span class="label">GPU<i class="more">›</i></span></div>
     <div class="mid">${F.pct(s.gpu)}</div>${bar((s.gpu ?? 0) / 100)}
     <div class="note">drawing ${F.wu(s.wGPU)}</div><div class="note">Neural Engine ${F.wu(s.wANE)}</div>`;
 
@@ -513,7 +593,7 @@ function cells(s) {
     const share = boot.free / Math.max(1, boot.total);
     const flag = share < 0.05 || boot.free < 8e9 ? pill('Almost full', 'bad') : share < 0.12 ? pill('Low', 'warn') : '';
     const more = s.volumes.filter(v => v !== boot).map(v => `${esc(v.name)} ${F.size(v.free)} free`);
-    $('disk').innerHTML = `<div class="row"><span class="label">Storage</span>${flag}</div>
+    $('disk').innerHTML = `<div class="row"><span class="label">Storage<i class="more">›</i></span>${flag}</div>
       <div class="mid">${F.size(boot.free).replace(' ', '<small>')} free</small></div>${bar(1 - share)}
       <div class="note">${F.size(boot.total - boot.free)} of ${F.size(boot.total)} used</div>
       <div class="note">${[esc(boot.name), ...more].join(' · ')}</div>`;
@@ -573,14 +653,14 @@ function procs(s) {
 
 // ---------- input ----------
 function pick(host) {
-  st.host = host; store.set('host', host); st.hover = null;
+  st.host = host; store.set('host', host); $('chart').hoverX = null; if (st.detail) $('sheet').close();
   connect(); loadHistory(); render();
 }
 $('hosts').addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.h !== st.host) pick(b.dataset.h); });
 $('ranges').addEventListener('click', e => {
   const i = [...$('ranges').children].indexOf(e.target.closest('button'));
   if (i < 0) return;
-  st.range = i; store.set('range', i); st.hover = null; loadHistory(); render();
+  st.range = i; store.set('range', i); $('chart').hoverX = null; loadHistory(); render();
 });
 $('modes').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || b.disabled) return;
@@ -599,13 +679,189 @@ fansEl.addEventListener('input', e => {
 fansEl.addEventListener('change', e => { if (e.target.type === 'range') { st.dragging = false; setFan(`fixed ${e.target.value}`); } });
 document.addEventListener('pointerup', () => setTimeout(() => { st.dragging = false; }, 300));
 
-const chart = $('chart');
-const hover = e => { const r = chart.getBoundingClientRect(); st.hover = e.clientX - r.left; drawChart(cur()); };
-chart.addEventListener('pointerdown', hover);
-chart.addEventListener('pointermove', e => { if (st.hover != null || e.pointerType === 'mouse') hover(e); });
-chart.addEventListener('pointerleave', () => { st.hover = null; drawChart(cur()); });
-document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse' && st.hover != null) setTimeout(() => { st.hover = null; drawChart(cur()); }, 1500); });
-window.addEventListener('resize', () => drawChart(cur()));
+function hoverable(c, redraw) {
+  const set = e => { c.hoverX = e.clientX - c.getBoundingClientRect().left; redraw(); };
+  c.addEventListener('pointerdown', set);
+  c.addEventListener('pointermove', e => { if (c.hoverX != null || e.pointerType === 'mouse') set(e); });
+  c.addEventListener('pointerleave', () => { c.hoverX = null; redraw(); });
+  c.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') setTimeout(() => { c.hoverX = null; redraw(); }, 1500); });
+}
+hoverable($('chart'), () => drawChart(cur()));
+hoverable($('dChart'), () => drawDetailChart());
+window.addEventListener('resize', () => { drawChart(cur()); drawDetailChart(); });
+
+// ---------- detail: tap a card for its history ----------
+const ACC = '#c6f24e', WARN = '#e5a93b';
+const KINDS = {
+  cpu:   { title: 'CPU', key: 'cpu', top: () => 100, axis: v => v + '%', fmt: F.pct, now: s => F.pct(s.cpu) },
+  mem:   { title: 'Memory', key: 'mem', top: s => s.memTotal, axis: v => F.gb(v, 0) + ' GB', fmt: v => F.gb(v) + ' GB',
+           now: s => `${F.gb(s.memUsed)}<small>/ ${F.gb(s.memTotal, 0)} GB</small>`, also: { key: 'swap', color: WARN, label: 'Swap' }, label: 'Used' },
+  therm: { title: 'Temperature', key: 'temp', top: () => 120, axis: v => v + '°', fmt: F.temp, now: s => `${F.temp(s.tCPU)}<small>CPU</small>` },
+  gpu:   { title: 'GPU', key: 'gpu', top: () => 100, axis: v => v + '%', fmt: F.pct, now: s => F.pct(s.gpu) },
+  fan:   { title: 'Fan', key: 'fan', axis: v => F.rpm(v), fmt: v => F.rpm(v) + ' rpm',
+           now: s => s.fans.length ? `${F.rpm(s.fans[0].rpm)}<small>rpm</small>` : '—' },
+  disk:  { title: 'Storage', key: 'free', axis: v => v ? F.size(v) : '0 GB', fmt: v => F.size(v) + ' free',
+           now: s => bootOf(s) ? `${F.size(bootOf(s).free).replace(' ', '<small>')} free</small>` : '—' },
+};
+st.detail = null; st.drange = 2;
+
+function openDetail(kind) {
+  st.detail = kind; st.drange = kind === 'disk' ? 3 : 2;
+  $('dChart').hoverX = null; lastExtra = '';
+  const h = cur();
+  if (kind === 'disk') { loadSSD(h); loadSpace(h, false); }
+  if (!$('sheet').open) { $('sheet').showModal(); $('sheet').focus(); }
+  document.documentElement.classList.add('locked');
+  loadHistory(st.drange);
+  renderDetail();
+}
+$('sheet').addEventListener('close', () => { st.detail = null; document.documentElement.classList.remove('locked'); });
+$('done').addEventListener('click', () => $('sheet').close());
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-detail]');
+  if (t && !e.target.closest('dialog')) openDetail(t.dataset.detail);
+});
+$('dRanges').addEventListener('click', e => {
+  const i = [...$('dRanges').children].indexOf(e.target.closest('button'));
+  if (i < 0) return;
+  st.drange = i + 1; $('dChart').hoverX = null; loadHistory(st.drange); renderDetail();
+});
+$('dExtra').addEventListener('click', e => { if (e.target.closest('[data-act=measure]')) loadSpace(cur(), true); });
+
+async function loadSSD(h) {
+  if (h.ssd !== undefined || h.base == null) return;
+  try { h.ssd = await fetch(h.base + 'ssd').then(r => r.json()); } catch { h.ssd = undefined; }
+  renderDetail();
+}
+async function loadSpace(h, fresh) {
+  if (h.base == null) return;
+  try { h.space = await fetch(h.base + 'space' + (fresh ? '?fresh=1' : ''), { cache: 'no-store' }).then(r => r.json()); } catch {}
+  renderDetail();
+  if (h.space?.running && st.detail === 'disk' && cur() === h && !document.hidden) setTimeout(() => loadSpace(h, false), 1500);
+}
+
+let lastExtra = '';
+function renderDetail() {
+  const kind = st.detail;
+  if (!kind) return;
+  const h = cur(), s = h.state === 'off' ? null : h.snap, K = KINDS[kind];
+  $('dTitle').textContent = `${K.title} · ${shortName(h)}`;
+  $('dNow').innerHTML = s ? K.now(s) : '—';
+  [...$('dRanges').children].forEach((b, i) => b.classList.toggle('on', i + 1 === st.drange));
+  $('dSub').innerHTML = kind === 'disk' ? forecast(h, s) : '';
+  drawDetailChart();
+  const extra = s ? EXTRA[kind](h, s) : '';
+  if (extra !== lastExtra) { $('dExtra').innerHTML = extra; lastExtra = extra; }   // unchanged HTML keeps taps and scroll intact
+}
+
+function drawDetailChart() {
+  const K = KINDS[st.detail];
+  if (!K) return;
+  const h = cur(), s = h.snap, main = seriesOf(h, K.key, st.drange);
+  // Free space is a new column: until the log has some, say so rather than draw a dot at "now".
+  if (K.key === 'free' && !(h.hist[RANGES[st.drange]]?.rows || []).some(r => r.free != null)) main.pts = [];
+  const lines = [{ pts: main.pts, color: ACC, fill: true }];
+  if (K.also) lines.push({ pts: seriesOf(h, K.also.key, st.drange).pts, color: K.also.color });
+  plot($('dChart'), { lines, from: main.from, end: main.end, range: st.drange, top: s && K.top ? K.top(s) : 0, axis: K.axis, fmt: K.fmt,
+    empty: K.key === 'free' ? 'Free space is logged from version 1.0.7; this fills in from now.' : 'Nothing logged for this range yet.' });
+  $('dLegend').innerHTML = K.also ? `<div><i class="sw" style="background:${ACC}"></i>${K.label}</div><div><i class="sw" style="background:${K.also.color}"></i>${K.also.label}</div>` : '';
+}
+
+const card = (title, body, right = '') => `<section class="card"><div class="row"><h2>${title}</h2>${right}</div>${body}</section>`;
+const kv = rows => `<div class="kv">${rows.filter(Boolean).map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join('')}</div>`;
+function procList(title, list, by) {
+  const top = [...list].sort((a, b) => b[by] - a[by]).slice(0, 8);
+  if (!top.length) return card(title, '<p class="empty">Gathering…</p>');
+  const max = Math.max(1e-9, ...top.map(p => p[by]));
+  return card(title, top.map(p => `<div class="proc"><span>${esc(p.name)}</span><b>${p.cpu.toFixed(1)}%</b><b>${F.gb(p.mem)} GB</b>
+    <i class="use" style="width:${Math.max(2, p[by] / max * 100)}%"></i></div>`).join(''), '<div class="cols"><span>CPU</span><span>Memory</span></div>');
+}
+
+const EXTRA = {
+  cpu: (h, s) => {
+    const e = s.eCores;
+    const cores = s.cores.map((v, i) => (i === e && e > 0 ? '<i class="gap"></i>' : '') + `<i><b style="height:${Math.max(3, v)}%"></b></i>`).join('');
+    return card('Each core now', `<div class="cores tall">${cores}</div><div class="note">${e ? `${e} efficiency cores, then ${s.cores.length - e} performance cores` : `${s.cores.length} cores`}</div><div class="note">Load ${s.load.map(l => l.toFixed(1)).join(' / ')} over 1, 5 and 15 minutes</div>`)
+      + procList('Using the CPU now', s.procs, 'cpu');
+  },
+  mem: (h, s) => card('Where it goes', kv([
+      ['Apps', F.gb(s.memApp) + ' GB'], ['Kept by macOS (wired)', F.gb(s.memWired) + ' GB'], ['Compressed', F.gb(s.memCompressed) + ' GB'],
+      ['Cached files (freed when needed)', F.gb(s.memCached) + ' GB'], ['Swap on disk', `${F.gb(s.swapUsed)} of ${F.gb(s.swapTotal)} GB`],
+      ['Pressure', ['', 'Normal', 'Warning', '', 'Critical'][s.pressure] || 'Normal']]))
+    + procList('Using the most memory', s.procs, 'mem'),
+  therm: (h, s) => card('Sensors now', kv([
+      ['CPU, hottest', F.temp(s.tCPU)], s.tCPUAvg != null && ['CPU, average', F.temp(s.tCPUAvg)], s.tGPU != null && ['GPU', F.temp(s.tGPU)],
+      s.tSSD != null && ['SSD', F.temp(s.tSSD)], s.battery?.temp != null && ['Battery', F.temp(s.battery.temp)],
+      ...s.fans.map((f, i) => [s.fans.length > 1 ? `Fan ${i ? 'right' : 'left'}` : 'Fan', F.rpm(f.rpm) + ' rpm']),
+      ['macOS thermal state', ['Nominal', 'Fair', 'Serious: slowing the chip', 'Critical: slowing the chip'][s.thermal] || '—']])),
+  gpu: (h, s) => card('Now', kv([['Busy', F.pct(s.gpu)], ['GPU drawing', F.wu(s.wGPU)], ['Neural Engine drawing', F.wu(s.wANE)]])),
+  fan: (h, s) => s.fans.length ? card('Now', kv([
+      ...s.fans.flatMap((f, i) => {
+        const n = s.fans.length > 1 ? (i ? 'Right fan' : 'Left fan') : 'Fan';
+        return [[n, F.rpm(f.rpm) + ' rpm'], [`${n} range`, `${F.rpm(f.min)}–${F.rpm(f.max)} rpm`]];
+      }),
+      ['Mode', ({ auto: 'Auto (macOS)', fixed: 'Fixed', curve: 'Curve' })[(s.fanPolicy || 'auto').split(' ')[0]]]])) : card('Fans', '<p class="empty">This Mac has no fans.</p>'),
+  disk: (h, s) => volumesCard(s) + spaceCard(h) + ssdCard(h),
+};
+
+/** "Full in about N days" from the last week of logged free space (least squares). */
+function forecast(h, s) {
+  const boot = bootOf(s);
+  if (!boot) return '';
+  const pts = seriesOf(h, 'free', 3).pts.filter(p => p.t >= now() - 7 * 86400);
+  const span = pts.length ? pts[pts.length - 1].t - pts[0].t : 0;
+  if (pts.length < 6 || span < 86400) return 'The forecast starts after a day of logged free space.';
+  const mt = pts.reduce((a, p) => a + p.t, 0) / pts.length, mv = pts.reduce((a, p) => a + p.v, 0) / pts.length;
+  const slope = pts.reduce((a, p) => a + (p.t - mt) * (p.v - mv), 0) / pts.reduce((a, p) => a + (p.t - mt) ** 2, 0);
+  const perDay = slope * 86400, days = Math.round(span / 86400);
+  if (perDay < -0.2e9) {
+    const left = boot.free / -perDay;
+    const tone = left < 30 ? 'var(--warning)' : 'var(--text)';
+    return `<b style="color:${tone}">Full in about ${left < 2 ? Math.round(left * 24) + ' hours' : Math.round(left) + ' days'}</b> at this rate: losing ${F.size(-perDay)} a day over the last ${days} days.`;
+  }
+  if (perDay > 0.2e9) return `Free space is growing by ${F.size(perDay)} a day over the last ${days} days.`;
+  return `Steady: free space has barely changed over the last ${days} days.`;
+}
+
+function volumesCard(s) {
+  return card(s.volumes.length > 1 ? 'Drives' : 'Drive', s.volumes.map(v => {
+    const used = v.total - v.free;
+    return `<div class="srow"><span>${esc(v.name)}${v.boot ? ' <span class="note" style="display:inline">· startup</span>' : ''}</span><b>${F.size(v.free)} free</b>
+      <i class="use" style="width:${used / Math.max(1, v.total) * 100}%"></i></div><div class="note" style="margin:2px 0 4px">${F.size(used)} of ${F.size(v.total)} used</div>`;
+  }).join(''));
+}
+
+function spaceCard(h) {
+  const r = h.space;
+  const btn = `<button class="pillbtn" data-act="measure"${r?.running ? ' disabled' : ''}>${r?.running ? 'Measuring…' : 'Measure again'}</button>`;
+  if (!r) return card('What’s using the space', '<p class="empty">Measuring…</p>');
+  const shown = r.items.filter(i => i.bytes > 0).slice(0, 10);
+  const max = Math.max(1, ...shown.map(i => i.bytes));
+  const rows = shown.map(i => `<div class="srow"><span>${esc(i.name)}</span><b>${r.partial || r.running ? '≥ ' : ''}${F.size(i.bytes)}</b><i class="use" style="width:${i.bytes / max * 100}%"></i></div>`
+    + (i.children || []).filter(c => c.bytes > 0).slice(0, 5).map(c =>
+      `<div class="srow sub"><span>${esc(c.name)}</span><b>${F.size(c.bytes)}</b><i class="use" style="width:${c.bytes / max * 100}%"></i></div>`).join('')).join('');
+  const measured = r.items.reduce((a, i) => a + i.bytes, 0), rest = r.total - r.free - measured;
+  const restRow = !r.running && !r.partial && rest > 1e9 ? `<div class="srow"><span style="color:var(--muted)">Everything else: macOS, system data, the folders left alone</span><b>${F.size(rest)}</b></div>` : '';
+  const alone = (r.leftAlone || []).map(n => n === '.Trash' ? 'Trash' : n);
+  const meta = r.running ? `Measuring… ${Math.round(r.seconds)} s` : `Measured ${ago(r.t)} in ${Math.round(r.seconds)} s` + (r.partial ? '. It ran out of time, so these are “at least”.' : '.');
+  return card('What’s using the space', `<p class="fine" style="margin-top:4px">${meta}</p>${rows}${restRow}
+    ${r.purgeable > 1e9 ? `<p class="fine">${F.size(r.purgeable)} of the used space is purgeable: macOS frees it by itself when space runs low.</p>` : ''}
+    ${r.snapshots ? `<p class="fine">${r.snapshots} Time Machine local snapshot${r.snapshots > 1 ? 's' : ''} on this drive.</p>` : ''}
+    ${alone.length ? `<p class="fine">Left alone, so macOS never has to ask for permission and nothing in the cloud gets downloaded: ${alone.map(esc).join(', ')}. Their space is in “everything else”.</p>` : ''}`, btn);
+}
+
+function ssdCard(h) {
+  const d = h.ssd;
+  if (d === undefined) return card('SSD health', '<p class="empty">Reading…</p>');
+  if (!d) return card('SSD health', '<p class="empty">This drive does not report its health.</p>');
+  const bad = d.warning !== 0 || d.mediaErrors > 0 || d.spare < d.spareThreshold;
+  const flag = bad ? pill('Check it', 'bad') : d.percentUsed >= 80 ? pill('Worn', 'warn') : pill('Healthy', 'good');
+  return card('SSD health', `<div class="note" style="margin-top:2px">${esc(d.model)}</div>
+    <div class="mid" style="margin:10px 0 8px">${Math.max(0, 100 - d.percentUsed)}%<small>of rated life left</small></div>${bar(d.percentUsed / 100, d.percentUsed >= 80 ? 'var(--warning)' : 'var(--chart2)')}
+    ${kv([['Written', F.size(d.written)], ['Read', F.size(d.read)], ['Powered on', `${Math.round(d.hours).toLocaleString('en-US')} h · ${Math.round(d.cycles)} starts`],
+      ['Spare blocks', `${d.spare}%`], ['Media errors', String(d.mediaErrors)], ['Unexpected power-offs', String(d.unsafeShutdowns)], d.temp != null && ['Temperature', F.temp(d.temp)]])}
+    <p class="fine">The drive’s own report (NVMe SMART). “Rated life” is its estimate of wear; most Macs never come close.</p>`, flag);
+}
 
 // ---------- lifecycle ----------
 document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) loadHistory(); });

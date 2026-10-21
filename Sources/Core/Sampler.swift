@@ -245,7 +245,7 @@ final class Sampler {
         return vols
     }
 
-    /// The eight processes using the most CPU since the last sample, helpers grouped under one name.
+    /// The processes using the most CPU since the last sample, then the largest by memory, helpers grouped under one name.
     private func topProcs() -> [Proc] {
         let n = proc_listallpids(nil, 0)
         guard n > 0 else { return [] }
@@ -272,8 +272,10 @@ final class Sampler {
             byName[name, default: (0, 0)].mem += Double(ti.pti_resident_size)
         }
         prevProcs = next; prevProcTime = nowTicks
-        return byName.sorted { $0.value.cpu > $1.value.cpu }.prefix(8)
-            .map { Proc(name: $0.key, cpu: $0.value.cpu, mem: $0.value.mem) }
+        // The busiest eight, plus the largest by memory so the phone's memory view can name them.
+        let byCPU = byName.sorted { $0.value.cpu > $1.value.cpu }.prefix(8)
+        let byMem = byName.sorted { $0.value.mem > $1.value.mem }.prefix(6).filter { m in !byCPU.contains { $0.key == m.key } }
+        return (byCPU + byMem).map { Proc(name: $0.key, cpu: $0.value.cpu, mem: $0.value.mem) }
     }
 }
 
