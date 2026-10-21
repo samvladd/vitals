@@ -73,6 +73,7 @@ final class ScreenRelay {
     private var ended = false, closed = false
     private var why = "closed"
     private var running = 2
+    private(set) var fromMac = 0, peakPerSecond = 0      // read once both threads are done
     private let onFinish: (ScreenRelay, String, TimeInterval) -> Void
 
     init(client: Int32, vnc: Int32, device: String, onFinish: @escaping (ScreenRelay, String, TimeInterval) -> Void) {
@@ -196,9 +197,12 @@ final class ScreenRelay {
 
     private func macToPage() {
         var buf = [UInt8](repeating: 0, count: 256 * 1024)
+        var second = Date(), inSecond = 0
         while true {
             let n = read(vnc, &buf, buf.count)
             guard n > 0 else { return end(reason: "Screen Sharing closed") }     // keeps an earlier reason
+            fromMac += n; inSecond += n
+            if Date().timeIntervalSince(second) >= 1 { peakPerSecond = max(peakPerSecond, inSecond); inSecond = 0; second = Date() }
             guard send(0x2, buf[0..<n]) else { return end(reason: "page stopped reading") }
         }
     }

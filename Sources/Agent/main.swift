@@ -86,7 +86,9 @@ func stream() -> Never {
     timer.setEventHandler(handler: tick)
     _ = sampler.sample()                        // prime the counters so the first line has rates
     usleep(250_000)
-    emit(machineInfo())
+    var info = machineInfo()
+    info.screen = Control.screenURL()
+    emit(info)
     tick()
     schedule()
     timer.resume()

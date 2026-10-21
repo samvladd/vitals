@@ -266,7 +266,7 @@ final class WebServer {
         case ("GET", "/manifest.webmanifest"): send(c, 200, "application/manifest+json", Data(Self.manifest.utf8), cache: "max-age=604800")
         case ("GET", "/icon.png"), ("GET", "/apple-touch-icon.png"): send(c, 200, "image/png", WebAssets.icon, cache: "max-age=604800")
         // "apps" lets the other Mac's page point to this one's Apps card; it says only whether it is on.
-        case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info),\"apps\":\(Control.load() != nil)}")
+        case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info),\"apps\":\(Control.load() != nil),\"screen\":\(Control.load()?.screen == true)}")
         case ("GET", "/events"): watch(c)
         case ("GET", "/history"): history(r, c)
         case ("GET", "/ssd"):
@@ -277,7 +277,7 @@ final class WebServer {
         case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
-        case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
+        case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
              ("POST", "/screen/resolution"):
             screen(r, c)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
@@ -425,6 +425,13 @@ final class WebServer {
             c.write(Data("HTTP/1.1 308 Permanent Redirect\r\nLocation: /screen/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
             drop(c)
         case "/screen/": send(c, 200, "text/html; charset=utf-8", WebAssets.screen, cache: "no-cache", extra: "X-Frame-Options: DENY\r\n")
+        case "/screen/manifest.webmanifest":
+            // Add to Dock (Safari on a Mac) or to the Home Screen: an app that opens straight on this screen.
+            let name = (try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)))?.model.components(separatedBy: " (").first ?? "Mac"
+            let m: [String: Any] = ["name": "\(name) Screen", "short_name": name, "start_url": "./", "scope": "./", "display": "standalone",
+                                    "background_color": "#000000", "theme_color": "#0c0d0f",
+                                    "icons": [["src": "../icon.png", "sizes": "180x180", "type": "image/png"]]]
+            send(c, 200, "application/manifest+json", (try? JSONSerialization.data(withJSONObject: m)) ?? Data())
         case "/screen/info":
             // The login name to suggest (the Mac's signed-in user) and what to call this Mac.
             let model = (try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)))?.model.components(separatedBy: " (").first
@@ -466,7 +473,10 @@ final class WebServer {
         Control.record("Screen opened from \(device)")
         let relay = ScreenRelay(client: fd, vnc: vnc, device: device) { relay, why, seconds in
             Screen.remove(relay)
-            Control.record("Screen closed from \(relay.device) after \(F.duration(seconds)): \(why)")
+            // What it moved, as the real-world benchmark: sizes and rates only, never what was on screen.
+            let mb = Double(relay.fromMac) / 1e6, avg = seconds > 0 ? mb / seconds : 0, peak = Double(relay.peakPerSecond) / 1e6
+            Control.record("Screen closed from \(relay.device) after \(F.duration(seconds)): \(why) · "
+                + String(format: "%.1f MB from the Mac, %.2f MB/s on average, %.2f MB/s at most", mb, avg, peak))
         }
         Screen.add(relay)
         relay.start()

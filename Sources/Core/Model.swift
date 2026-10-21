@@ -2,7 +2,7 @@ import Foundation
 
 // The wire format between the agent (on each Mac) and the menu bar app: one JSON object per line.
 
-let vitalsVersion = "1.0.9"
+let vitalsVersion = "1.0.10"
 
 struct Fan: Codable, Equatable {
     var rpm: Double
@@ -97,6 +97,7 @@ struct MachineInfo: Codable {
     var eCores: Int
     var memory: Double
     var os: String
+    var screen: String? = nil     // the Screen page's address when `screen on` (Control.swift)
 }
 
 /// One minute of the logger's record.
