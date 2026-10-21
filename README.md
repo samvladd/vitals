@@ -211,6 +211,23 @@ there is no list of addresses to keep.
 Each Mac's page may read the others' dashboards (your Macs only, found through Tailscale), never
 change anything on them: quitting apps, fans and the screen stay on each Mac's own page.
 
+## Energy and cost
+
+The **Energy & cost** card shows what a Mac used today, this month, last month and this year, in kWh,
+with a bar for each of the last 12 months; this month's bar has a dashed outline to where it is
+heading. The fleet card adds every Mac's month together: "This month: 23.4 kWh · $7.02 · 9.4 kg CO₂
+together".
+
+- **Set your price** on the card, per kWh, in any currency. Until you do, it shows energy and CO₂ only.
+  CO₂ uses 0.4 kg per kWh unless you change it; the real figure depends on your country's grid (under
+  0.1 in France or Norway, about 0.7 in India). Both stay on the device you set them on.
+- **Estimates, said plainly.** Each Mac measures its own power, every minute its logger runs. Time
+  asleep or off is not counted, and a meter at the wall reads a little more (the power supply's own
+  loss). A period the log only partly covers says so ("since Oct 20", "282 of 295 days logged").
+- **Cheap to ask.** A year of minute logs is half a million lines, so each Mac keeps a small summary
+  (`Logs/energy.json`, ~30 KB): a past day is read once, and again only if its file changes; today is
+  read fresh. A year of history: ~0.15 s the first time, ~20 ms after; a fleet tile's month total ~3 ms.
+
 ## Quit and open apps from your phone
 
 <img src="docs/apps.png" width="300" align="right" alt="The Apps card: each app with its memory and CPU, a Quit button, Tailscale marked Protected, and recent activity">

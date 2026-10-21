@@ -281,6 +281,11 @@ final class WebServer {
             guard let i = try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)) else { return send(c, 500, json: "null") }
             send(c, 200, json: json(Fleet.summary(info: i)))
         case ("GET", "/history"): history(r, c)
+        case ("GET", "/energy"):            // a year of daily totals (Energy.swift); off the main queue, as the first one builds the cache
+            DispatchQueue.global(qos: .utility).async {
+                let body = json(Energy.report())
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
         case ("GET", "/ssd"):
             DispatchQueue.global(qos: .utility).async {
                 let body = ssdHealth().map(json) ?? "null"
