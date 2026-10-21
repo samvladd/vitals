@@ -212,6 +212,21 @@ there is no list of addresses to keep.
 Each Mac's page may read the others' dashboards (your Macs only, found through Tailscale), never
 change anything on them: quitting apps, fans and the screen stay on each Mac's own page.
 
+**Wake a sleeping Mac.** A Mac that is asleep can't answer its own page, but another Mac on the same
+network can wake it. On the page of a Mac where app control is on for your device (see
+[below](#quit-and-open-apps-from-your-phone)), a sleeping Mac's tile has a **Wake** button, if that Mac
+was last seen on the same network. Tap it and the Mac whose page you opened sends the standard
+Wake-on-LAN packet across its network; the tile says "Waking…" and checks for a minute. So from your
+phone on cellular, open the page of any Mac that is awake at home and wake the mini from there.
+
+- The sleeping Mac needs **Wake for network access** on (System Settings › Battery › Options on a
+  laptop, › Energy on a desktop). It is most dependable over Ethernet.
+- It only wakes your own Macs: each Mac reads how to wake the others (their network card's address)
+  from their dashboards itself, over Tailscale, and keeps it in `wake.json`; it sends the packet only
+  to its own network, never across Tailscale. Every wake is in the activity log.
+- If macOS asks whether `vitals-agent` may find devices on your local network, allow it; a refusal
+  shows on the tile.
+
 ## Quit and open apps from your phone
 
 <img src="docs/apps.png" width="300" align="right" alt="The Apps card: each app with its memory and CPU, a Quit button, Tailscale marked Protected, and recent activity">
