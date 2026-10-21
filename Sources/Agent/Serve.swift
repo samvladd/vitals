@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import launch
 
@@ -42,7 +43,8 @@ func serve() -> Never {
     let origins = Set((option("--allow-origin") ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " /")) })
     server = WebServer(listener: fd, peer: peer, origins: origins)
     server?.start()
-    dispatchMain()
+    // Not dispatchMain: macOS keeps the list of running apps current only while the main run loop runs.
+    while true { _ = RunLoop.main.run(mode: .default, before: .distantFuture) }
 }
 
 /// The socket launchd opened for us (see `install-serve`), or nil when started by hand.
@@ -82,8 +84,7 @@ func installServe() {
     installLaunchAgent("com.vitals.serve", a, ["RunAtLoad": false, "KeepAlive": false, "Sockets": ["Listener": listener]])
     // Shows Tailscale's own output: the first time, it prints a link to enable Serve on the tailnet
     // and waits for it, so give up after a while rather than hang.
-    let ts = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
-        .first { FileManager.default.isExecutableFile(atPath: $0) }
+    let ts = tailscaleCLI
         .map { t -> Process in let p = Process(); p.executableURL = URL(fileURLWithPath: t); p.arguments = ["serve", "--bg", String(port)]; return p }
     if let ts, (try? ts.run()) != nil {
         let deadline = Date(timeIntervalSinceNow: 30)
@@ -181,6 +182,8 @@ final class WebServer {
     private var lastBusy = Date()
     private var emptySince: Date?
     private lazy var info = json(machineInfo())
+    private lazy var meter = AppMeter()
+    private var refusals: [String: Date] = [:]
 
     init(listener: Int32, peer: String?, origins: Set<String>) { listenFD = listener; self.peer = peer; self.origins = origins }
 
@@ -241,6 +244,12 @@ final class WebServer {
 
     private func route(_ r: Request, _ c: Conn) {
         c.origin = r.headers["origin"]
+        // Only ever reached through `tailscale serve` (a *.ts.net name) or on this Mac itself. A web page
+        // that points its own domain at 127.0.0.1 (DNS rebinding) arrives under that domain and stops here.
+        let host = (r.headers["host"] ?? "").split(separator: ":").first.map { $0.lowercased() } ?? ""
+        guard host.hasSuffix(".ts.net") || host == "127.0.0.1" || host == "localhost" else {
+            return send(c, 403, json: #"{"error":"forbidden"}"#)
+        }
         // A page on another site can post here from a tailnet browser, but it cannot add this header
         // without a CORS preflight, which this server never grants.
         if r.method == "POST", r.headers["x-vitals"] != "1" { return send(c, 403, json: #"{"error":"forbidden"}"#) }
@@ -260,6 +269,7 @@ final class WebServer {
             }
         case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
+        case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
         }
@@ -330,5 +340,49 @@ final class WebServer {
         driver.set(p.text)
         tick()
         send(c, 200, json: "{\"policy\":\"\(p.text)\"}")
+    }
+
+    // MARK: apps (Control.swift)
+
+    private func apps(_ r: Request, _ c: Conn) {
+        c.origin = nil                      // never readable from the other Mac's page
+        let change = r.method == "POST"
+        let device: String
+        switch Control.gate(r, change: change) {
+        case .off: return send(c, 404, json: #"{"error":"off"}"#)
+        case .refused(let why):
+            // Logged once per address and reason every ten minutes, so a polling page doesn't flood it.
+            let from = r.headers["x-forwarded-for"] ?? "this Mac", key = from + why
+            if refusals[key].map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+                refusals[key] = Date()
+                Control.record("\(r.method) \(r.path) from \(from) (\(r.headers["tailscale-user-login"] ?? "no account")): \(why)", "refused")
+            }
+            return send(c, 403, json: json(["error": "This device isn't allowed to control apps on this Mac."]))
+        case .allowed(let d): device = d
+        }
+        switch r.path {
+        case "/apps":
+            struct Reply: Encodable { var device: String, apps: [AppRow], recent: [Control.Entry] }
+            send(c, 200, json: json(Reply(device: device, apps: meter.list(), recent: Control.recent(5))))
+        case "/apps/installed": send(c, 200, json: json(Control.installed()))
+        case "/apps/icon":
+            guard let png = Control.icon(id: r.query["id"] ?? "") else { return send(c, 404, "text/plain", Data()) }
+            send(c, 200, "image/png", png, cache: "private, max-age=86400")
+        case "/apps/quit":
+            // "quit BUNDLE-ID" or "force BUNDLE-ID": every running copy of that app.
+            let w = r.body.split(separator: " ").map(String.init)
+            guard w.count == 2, w[0] == "quit" || w[0] == "force" else { return send(c, 400, json: #"{"error":"quit|force BUNDLE-ID"}"#) }
+            let name = Control.running(w[1]).first?.localizedName ?? w[1]
+            let err = Control.quit(id: w[1], force: w[0] == "force")
+            Control.record("\(w[0] == "force" ? "Force quit" : "Quit") \(name) from \(device)" + (err.map { ": \($0)" } ?? ""), err == nil ? "done" : "failed")
+            send(c, err == nil ? 200 : 409, json: json(["error": err]))
+        default:                            // /apps/open, body: a bundle ID from /apps/installed
+            let id = r.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = Control.installed().first { $0.id == id }?.name ?? id
+            Control.open(id: id) { [weak self] err in
+                Control.record("Open \(name) from \(device)" + (err.map { ": \($0)" } ?? ""), err == nil ? "done" : "failed")
+                self?.send(c, err == nil ? 200 : 409, json: json(["error": err]))
+            }
+        }
     }
 }
