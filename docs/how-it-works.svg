@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif">
+  <rect width="1200" height="430" rx="22" fill="#0c0d0f"/>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c6f24e"/>
+    </marker>
+  </defs>
+
+  <!-- Your devices -->
+  <text x="40" y="52" fill="#8f9296" font-size="15" font-weight="600" letter-spacing="1.5">YOUR DEVICES</text>
+  <g>
+    <rect x="40" y="76" width="230" height="96" rx="16" fill="#15171a" stroke="#24272c"/>
+    <text x="64" y="114" fill="#fff" font-size="21" font-weight="600">iPhone</text>
+    <text x="64" y="144" fill="#b4b4b4" font-size="15">Home Screen app</text>
+  </g>
+  <g>
+    <rect x="40" y="190" width="230" height="96" rx="16" fill="#15171a" stroke="#24272c"/>
+    <text x="64" y="228" fill="#fff" font-size="21" font-weight="600">MacBook</text>
+    <text x="64" y="258" fill="#b4b4b4" font-size="15">Menu bar app · Dock app</text>
+  </g>
+  <text x="40" y="330" fill="#8f9296" font-size="14">Any browser on your tailnet,</text>
+  <text x="40" y="350" fill="#8f9296" font-size="14">from anywhere</text>
+
+  <!-- Tailscale -->
+  <rect x="320" y="76" width="250" height="210" rx="18" fill="none" stroke="#c6f24e" stroke-width="1.5" stroke-dasharray="6 6"/>
+  <text x="345" y="112" fill="#c6f24e" font-size="19" font-weight="600">Tailscale</text>
+  <text x="345" y="142" fill="#b4b4b4" font-size="15">Encrypted, peer to peer</text>
+  <text x="345" y="172" fill="#b4b4b4" font-size="15">Your devices only:</text>
+  <text x="345" y="194" fill="#b4b4b4" font-size="15">nothing open to the internet</text>
+  <text x="345" y="234" fill="#8f9296" font-size="14">Tells the Mac who you are</text>
+  <text x="345" y="254" fill="#8f9296" font-size="14">and which device you're on</text>
+  <path d="M275 124 H315" stroke="#c6f24e" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M275 238 H315" stroke="#c6f24e" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M575 181 H615" stroke="#c6f24e" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- The Mac -->
+  <text x="620" y="52" fill="#8f9296" font-size="15" font-weight="600" letter-spacing="1.5">THE MAC (MAC MINI)</text>
+  <rect x="620" y="76" width="540" height="300" rx="18" fill="#15171a" stroke="#24272c"/>
+  <text x="646" y="112" fill="#fff" font-size="20" font-weight="600">vitals-agent</text>
+  <text x="790" y="112" fill="#8f9296" font-size="14">started by macOS only when a page opens</text>
+
+  <rect x="646" y="130" width="158" height="104" rx="12" fill="#1d2024"/>
+  <text x="662" y="160" fill="#fff" font-size="16" font-weight="600">Checks</text>
+  <text x="662" y="184" fill="#b4b4b4" font-size="13">account · device</text>
+  <text x="662" y="204" fill="#b4b4b4" font-size="13">address · own page</text>
+  <text x="662" y="224" fill="#b4b4b4" font-size="13">every request</text>
+
+  <rect x="818" y="130" width="148" height="104" rx="12" fill="#1d2024"/>
+  <text x="834" y="160" fill="#fff" font-size="16" font-weight="600">Dashboard</text>
+  <text x="834" y="184" fill="#b4b4b4" font-size="13">power · heat · fans</text>
+  <text x="834" y="204" fill="#b4b4b4" font-size="13">apps: quit, open</text>
+  <text x="834" y="224" fill="#b4b4b4" font-size="13">a year of history</text>
+
+  <rect x="980" y="130" width="154" height="104" rx="12" fill="#1d2024" stroke="#c6f24e" stroke-opacity=".5"/>
+  <text x="996" y="160" fill="#fff" font-size="16" font-weight="600">Screen relay</text>
+  <text x="996" y="184" fill="#b4b4b4" font-size="13">&lt; 1 ms, ~1 MB</text>
+  <text x="996" y="204" fill="#b4b4b4" font-size="13">1x picture while</text>
+  <text x="996" y="224" fill="#b4b4b4" font-size="13">you watch</text>
+
+  <path d="M1057 240 V282" stroke="#c6f24e" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="900" y="288" width="234" height="66" rx="12" fill="#24272c"/>
+  <text x="916" y="316" fill="#fff" font-size="16" font-weight="600">macOS Screen Sharing</text>
+  <text x="916" y="338" fill="#b4b4b4" font-size="13">asks for the Mac's own login</text>
+
+  <text x="646" y="318" fill="#8f9296" font-size="14">Every action and refusal is logged</text>
+  <text x="646" y="340" fill="#8f9296" font-size="14">and shown on the page.</text>
+
+  <text x="40" y="405" fill="#6b6b6b" font-size="13">Idle: no Vitals server process at all. Watching: ~3 MB. One native binary, no dependencies.</text>
+</svg>
