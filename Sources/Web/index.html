@@ -71,6 +71,11 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 #fleetSum { color: var(--faint); font-size: 13px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chart3); flex: none; }
 .dot.live { background: var(--accent); } .dot.wait { background: var(--warning); } .dot.off { background: var(--negative); }
+/* Wake: a sleeping Mac's tile can wake it (the wake block in the script). Its note can make a tile
+   taller than its neighbour, so tiles keep their content at the top rather than centred. */
+.fleet .mac { display: flex; flex-direction: column; }
+.mac .wake { align-self: flex-start; margin-top: 8px; background: var(--chart4); }
+.mac .sub.wnote { white-space: normal; color: var(--warning); }
 
 .title { padding: 18px 2px 14px; }
 .title .row { align-items: baseline; flex-wrap: wrap; }
@@ -510,7 +515,7 @@ function fleetCard(all, dotOf) {
     const alert = x.state === 'off' ? '' : free != null && free < 8e9 ? `<div class="sub" style="color:var(--negative)">Storage almost full: ${F.size(free)} free</div>`
       : t >= 90 ? `<div class="sub" style="color:var(--warning)">Running hot</div>` : '';
     return `<button class="mac${x === cur() ? ' on' : ''}" data-h="${esc(x.key)}"><div class="top"><i class="${dotOf(x)}"></i><span>${esc(shortName(x))}</span></div>
-      <div class="w">${x.state === 'off' ? '—' : F.watts(w)}<small>W</small></div>${sub.map(l => `<div class="sub">${esc(l)}</div>`).join('')}${alert}</button>`;
+      <div class="w">${x.state === 'off' ? '—' : F.watts(w)}<small>W</small></div>${sub.map(l => `<div class="sub">${esc(l)}</div>`).join('')}${alert}${wakeTile(x)}</button>`;
   };
   const html = all.map(tile).join('') + none.map(p => `<div class="mac none"><div class="top"><span>${esc(shortName(p))}</span></div>
       <div class="sub" style="white-space:normal;margin-top:6px">No Vitals here yet. Set up its dashboard and it joins this list.</div></div>`).join('');
@@ -1098,6 +1103,55 @@ $('pList').addEventListener('click', async e => {
   ap.opening = null; renderPicker();
 });
 
+// ---------- wake: a sleeping Mac's tile can wake it, through this page's own Mac (Wake.swift) ----------
+// Offered only to a device that may control this Mac (its Apps card is on), and only for a Mac last seen
+// on this Mac's own network, since the wake packet never leaves it. A sleeping Mac can't be asked how
+// to wake it, so each one's answer is kept from its last /summary. This Mac checks it all again.
+const wk = { seen: (() => { try { return JSON.parse(store.get('wake', '{}')) || {}; } catch { return {}; } })(), busy: {} };
+function wakeSaw(h, m) {
+  if (!isPeer(h) || !m.wake || JSON.stringify(wk.seen[h.key]) === JSON.stringify(m.wake)) return;
+  wk.seen[h.key] = m.wake; store.set('wake', JSON.stringify(wk.seen));
+}
+function canWake(x) {
+  const w = x.sum?.wake || wk.seen[x.key], me = st.here.sum?.wake;
+  return isPeer(x) && ap.state === 'on' && !!w && !!me && w.broadcast === me.broadcast && (!w.router || !me.router || w.router === me.router);
+}
+function wakeTile(x) {
+  const b = wk.busy[x.key];
+  if (b?.state === 'awake') return '<div class="sub" style="color:var(--accent)">Awake</div>';
+  if (x.state !== 'off') return '';
+  if (b?.state === 'waking') return '<div class="sub">Waking…</div>';
+  const note = b?.state === 'none' ? 'No answer: it may need Wake for network access in System Settings › Battery/Energy' : b?.state === 'error' ? b.msg : '';
+  return (note ? `<div class="sub wnote">${esc(note)}</div>` : '')
+    + (canWake(x) ? `<span class="pillbtn wake" role="button" tabindex="0" data-wake="${esc(x.key)}">Wake</span>` : '');
+}
+async function wake(key) {
+  const x = st.peers.find(p => p.key === key), w = x && (x.sum?.wake || wk.seen[key]);
+  if (!w || wk.busy[key]?.state === 'waking') return;
+  const b = wk.busy[key] = { state: 'waking', at: Date.now() };
+  const fail = msg => { b.state = 'error'; b.msg = msg; render(); };
+  render();
+  try {
+    const r = await fetch('wake', { method: 'POST', headers: { 'X-Vitals': '1' }, body: w.mac });
+    if (!r.ok) return fail((await r.json().catch(() => ({}))).error || 'This Mac refused.');
+  } catch { return fail('This Mac did not answer.'); }
+  // A Mac takes a few seconds to wake and rejoin Tailscale: ask it every 4 s for a minute.
+  while (Date.now() - b.at < 60000) {
+    await new Promise(r => setTimeout(r, 4000));
+    if (wk.busy[key] !== b) return;
+    try { if (!(await fetch(x.base + 'summary', { cache: 'no-store', signal: AbortSignal.timeout(3500) })).ok) continue; } catch { continue; }
+    b.state = 'awake'; await probe(x); connect(); render();
+    return setTimeout(() => { if (wk.busy[key] === b) { delete wk.busy[key]; render(); } }, 8000);
+  }
+  b.state = 'none'; render();
+}
+// The tile is itself a button (it opens that Mac), so Wake is caught on the way down, before the tile.
+for (const type of ['click', 'keydown']) $('fleet').addEventListener(type, e => {
+  const b = e.target.closest('[data-wake]');
+  if (!b || (type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+  e.stopPropagation(); e.preventDefault(); wake(b.dataset.wake);
+}, true);
+
 // ---------- lifecycle ----------
 document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) { loadHistory(); loadApps(); } });
 setInterval(() => { if (!document.hidden) loadHistory(); if (ap.state !== 'on') loadApps(); }, 60000);
@@ -1120,6 +1174,7 @@ async function probe(h) {
     if (!r.ok) throw 0;
     const m = await r.json();
     h.sum = m; h.info = m.info; h.apps = !!m.apps; h.screen = !!m.screen; h.vitals = true;
+    wakeSaw(h, m);
     if (h.state !== 'live') h.state = 'up';
     if (!h.seen && m.t) h.seen = m.t;
     remember(h);

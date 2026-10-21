@@ -56,6 +56,7 @@ enum Fleet {
         var t: Double?, w: Double?, cpu: Double?, temp: Double?, mem: Double?, free: Double?
         var uptime: Double
         var apps: Bool, screen: Bool
+        var wake = Wake.mine()                 // how another Mac on its network can wake it (Wake.swift)
     }
 
     static func summary(info: MachineInfo) -> Summary {

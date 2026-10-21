@@ -277,6 +277,7 @@ final class WebServer {
         case ("GET", "/fleet"):
             struct Reply: Encodable { var members: [Fleet.Member] }
             send(c, 200, json: json(Reply(members: Fleet.membersNow())))
+            Wake.learn(Fleet.members())         // keep how to wake each one, for when it sleeps
         case ("GET", "/summary"):
             guard let i = try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)) else { return send(c, 500, json: "null") }
             send(c, 200, json: json(Fleet.summary(info: i)))
@@ -292,6 +293,7 @@ final class WebServer {
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
              ("POST", "/screen/resolution"):
             screen(r, c)
+        case ("POST", "/wake"): c.origin = nil; let (code, body) = Wake.request(r); send(c, code, json: body)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
         }
