@@ -287,6 +287,11 @@ final class WebServer {
                 let body = json(Timeline.day(r.query["day"]))
                 DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
             }
+        case ("GET", "/energy"):            // a year of daily totals (Energy.swift); off the main queue, as the first one builds the cache
+            DispatchQueue.global(qos: .utility).async {
+                let body = json(Energy.report())
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
         case ("GET", "/ssd"):
             DispatchQueue.global(qos: .utility).async {
                 let body = ssdHealth().map(json) ?? "null"

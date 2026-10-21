@@ -325,6 +325,28 @@ body.away #dayCard { display: none; }
 }
 /* ========== end of the activity timeline's styles ========== */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ===== Energy & cost (energy feature) ===== */
+#energyCard { order: 3; }
+body.away #energyCard { display: none; }
+.e-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; margin-top: 14px; }
+.e-stat { min-width: 0; }
+.e-num { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; margin-top: 2px; white-space: nowrap; }
+.e-num small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; letter-spacing: 0; }
+.e-stat .note { margin-top: 3px; }
+.e-stat .note.cost { color: var(--muted); }
+#eChart { display: block; width: 100%; height: 150px; margin: 18px 0 4px; touch-action: pan-y; cursor: crosshair; }
+.e-form { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; align-items: center; margin-top: 14px; padding: 14px 0 2px; border-top: 1px solid var(--line); }
+.e-form label { color: var(--muted); font-size: 14px; }
+.e-form .e-in { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 14px; }
+.e-form input { height: 40px; border: 0; border-radius: 10px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 10px; width: 92px; text-align: right; }
+.e-form input#eCur { width: 46px; text-align: center; }
+.e-form input:focus { outline: 2px solid var(--chart3); }
+.e-form .fine { grid-column: 1 / -1; margin-top: 0; }
+#fleetEnergy { color: var(--muted); font-size: 13px; margin-top: 12px; }
+#fleetEnergy:empty { display: none; }
+@media (min-width: 900px) { .e-stats { gap: 16px 24px; } #eChart { height: 170px; } }   /* 2 × 2 still: four across would cut the cost line */
+/* ===== /Energy & cost ===== */
 </style>
 </head>
 <body>
@@ -343,6 +365,7 @@ body.away #dayCard { display: none; }
   <section class="card" id="fleetCard" hidden>
     <div class="row"><h2>Your Macs</h2><span id="fleetSum"></span></div>
     <div class="fleet" id="fleet"></div>
+    <p id="fleetEnergy"></p><!-- energy feature: the fleet's month together -->
   </section>
   <div class="col">
     <section class="card" id="asleep"><div class="moon"></div><h2 id="asleepTitle">Asleep</h2><p id="asleepNote"></p></section>
@@ -369,6 +392,21 @@ body.away #dayCard { display: none; }
       <p id="fanNote"></p>
       <p id="fanErr"></p>
     </section>
+    <!-- ===== Energy & cost (energy feature) ===== -->
+    <section class="card" id="energyCard" hidden>
+      <div class="row"><h2>Energy &amp; cost</h2><button class="link" id="eSet">Set your price</button></div>
+      <div class="e-form" id="eForm" hidden>
+        <label for="ePrice">Price per kWh</label>
+        <span class="e-in"><input id="eCur" maxlength="3" autocomplete="off" aria-label="Currency symbol"><input id="ePrice" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00"></span>
+        <label for="eCO2">kg CO₂ per kWh</label>
+        <span class="e-in"><input id="eCO2" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.4"></span>
+        <p class="fine">The price is on your electricity bill. The grid’s CO₂ per kWh depends on where you live: under 0.1 kg in France or Norway, about 0.4 in the US, 0.7 in India. Both are kept on this device only.</p>
+      </div>
+      <div class="e-stats" id="eStats"></div>
+      <canvas id="eChart" aria-label="Energy used each month, the last 12 months"></canvas>
+      <p class="fine" id="eNote"></p>
+    </section>
+    <!-- ===== /Energy & cost ===== -->
   </div>
   <div class="col">
     <section class="card grid" id="gridCard">
@@ -596,6 +634,7 @@ function render() {
   procs(s);
   renderApps();
   renderActions();
+  renderEnergy();
   renderDetail();
   renderDay();                     // the activity timeline
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
@@ -1479,8 +1518,7 @@ for (const type of ['click', 'keydown']) $('fleet').addEventListener(type, e => 
   if (!b || (type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
   e.stopPropagation(); e.preventDefault(); wake(b.dataset.wake);
 }, true);
-// ========== activity timeline: "what did my Mac do?" (Timeline.swift, GET /timeline) ==========
-// One day of the Mac on screen, from its own log, so any Mac in the fleet can be read the same way
+// ========== activity timeline: "what did my Mac do?" (Timeline.swift, GET /timeline) ===// One day of the Mac on screen, from its own log, so any Mac in the fleet can be read the same way
 // (h.base + 'timeline'). Past days never change, so each is fetched once; today is fetched again every
 // five minutes while it is on screen. A Mac on a Vitals from before the timeline answers 404: no card.
 const tl = { host: null, day: null, sel: null, all: false, html: '' };
@@ -1625,6 +1663,153 @@ for (const id of ['dayPrev', 'dayNext']) $(id).addEventListener('click', e => {
 });
 setInterval(() => { if (!document.hidden) renderDay(); }, 60000);     // today's refresh, also while nothing streams
 // ========== end of the activity timeline ==========
+=======
+// ===== Energy & cost (energy feature) =====
+// What each Mac used, from its own log: /energy is a year of daily totals that the Mac keeps cached, so
+// this costs it a few milliseconds. Cost and CO₂ come from a price and a grid intensity kept on this
+// device; with no price set, only energy and CO₂ are shown. The fleet card adds up every Mac's month
+// from /summary, which the tiles fetch anyway.
+const EN = {
+  price: () => { const v = parseFloat(store.get('energyPrice', '')); return v > 0 ? v : 0; },
+  cur: () => store.get('energyCurrency', '') || '$',
+  co2: () => { const v = parseFloat(store.get('energyCO2', '')); return v >= 0 ? v : 0.4; },
+  kwh: wh => { const k = wh / 1000; return k === 0 ? '0' : k < 0.01 ? '<0.01' : k >= 100 ? Math.round(k).toLocaleString('en-US') : k >= 10 ? k.toFixed(1) : k.toFixed(2); },
+  money: wh => { const v = wh / 1000 * EN.price(); return EN.cur() + (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2)); },
+  kg: wh => { const v = wh / 1000 * EN.co2(); return (v >= 100 ? Math.round(v).toLocaleString('en-US') : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + ' kg CO₂'; },
+  /** "$2.46 · 3.3 kg CO₂", or just the CO₂ until a price is set. */
+  cost: wh => [EN.price() && EN.money(wh), EN.kg(wh)].filter(Boolean).join(' · '),
+  short: day => { const [y, m, d] = day.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); },
+};
+
+async function loadEnergy(h) {
+  if (h.base == null || h.enBusy || document.hidden || (h.enAt && Date.now() - h.enAt < 60000)) return;
+  h.enBusy = true;
+  try {
+    const r = await fetch(h.base + 'energy', { cache: 'no-store' });
+    if (r.ok) { h.en = await r.json(); h.enOld = false; } else if (r.status === 404) h.enOld = true;     // a Mac on an older Vitals
+  } catch {}
+  h.enAt = Date.now(); h.enBusy = false;
+  renderEnergy();
+}
+
+/** The last 12 months, oldest first, from the daily totals; this month also gets where it is heading. */
+function energyMonths(r) {
+  const [y, m, d] = r.day.split('-').map(Number), out = [];
+  for (let i = 11; i >= 0; i--) {
+    const at = new Date(y, m - 1 - i, 1), key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}`;
+    const days = r.days.filter(x => x.day.startsWith(key));
+    out.push({ key, at, wh: days.reduce((a, x) => a + x.wh, 0), days: days.length, now: i === 0 });
+  }
+  // On pace for: only with every day so far logged, from the full days (today is still going).
+  const full = r.days.filter(x => x.day.startsWith(out[11].key) && x.day < r.day);
+  if (full.length >= 3 && r.month.days === d) {
+    const dim = new Date(y, m, 0).getDate();
+    out[11].pace = full.reduce((a, x) => a + x.wh, 0) / full.length * (dim - full.length) + full.reduce((a, x) => a + x.wh, 0);
+  }
+  return out;
+}
+
+let lastEnergy = '', lastEnergyDraw = '', lastFleetEnergy = '', lastEnergyHost = '';
+function renderEnergy() {
+  fleetEnergy();
+  const h = cur(), card = $('energyCard');
+  if (h.key !== lastEnergyHost) { lastEnergyHost = h.key; $('eChart').hoverX = null; }
+  card.hidden = h.state === 'off' || h.base == null || (!h.en && !h.enOld && h.enAt != null);
+  if (!h.en || Date.now() - (h.enAt || 0) > 60000) loadEnergy(h);
+  const price = EN.price();
+  $('eSet').hidden = !!h.enOld && !h.en;
+  $('eSet').textContent = !$('eForm').hidden ? 'Done' : price ? 'Price and CO₂' : 'Set your price';
+  const r = h.en;
+  let html;
+  if (h.enOld && !r) html = `<p class="empty" style="grid-column:1/-1">Update Vitals on ${esc(shortName(h))} to see its energy here.</p>`;
+  else if (!r) html = ['Today', 'This month', 'Last month', 'This year'].map(l => `<div class="e-stat"><span class="label">${l}</span><div class="e-num">—</div></div>`).join('');
+  else {
+    const [y, m, d] = r.day.split('-').map(Number);
+    const months = energyMonths(r), dim = new Date(y, m - 1, 0).getDate();
+    const doy = Math.round((new Date(y, m - 1, d) - new Date(y, 0, 1)) / 86400000) + 1;
+    // Say how much of the period the log covers, so a partial month is never mistaken for a whole one.
+    const cover = (t, start, total) => !t.days ? 'Nothing logged'
+      : r.first > start ? `since ${EN.short(r.first)}` : t.days < total ? `${t.days} of ${total} days logged` : '';
+    const lastStart = F.day(new Date(y, m - 2, 1)), mStart = r.day.slice(0, 8) + '01', yStart = r.day.slice(0, 5) + '01-01';
+    const pace = months[11].pace;
+    const cell = (label, t, extra) => `<div class="e-stat"><span class="label">${label}</span>
+      <div class="e-num">${t.days ? EN.kwh(t.wh) + '<small>kWh</small>' : '—'}</div>
+      <div class="note cost">${t.days ? EN.cost(t.wh) : '&nbsp;'}</div><div class="note">${extra || '&nbsp;'}</div></div>`;
+    html = cell('Today', r.today, !r.today.days ? '' : r.today.minutes >= 1430 ? 'Logged all day' : `${F.dur(r.today.minutes * 60)} logged`)
+      + cell('This month', r.month, cover(r.month, mStart, d) || (pace ? `on pace for ${EN.kwh(pace)} kWh` : ''))
+      + cell(months[10].at.toLocaleDateString('en-US', { month: 'long' }), r.lastMonth, cover(r.lastMonth, lastStart, dim))
+      + cell(`This year`, r.year, cover(r.year, yStart, doy));
+  }
+  if (html !== lastEnergy) { $('eStats').innerHTML = html; lastEnergy = html; }
+  $('eChart').hidden = !r;
+  $('eNote').textContent = r ? 'Estimates. The Mac measures its own power each minute the logger runs: time asleep or off is not counted, '
+    + 'and a meter at the wall reads a little more (the power supply’s own loss). '
+    + (price ? `Cost at ${EN.cur()}${String(price).split('.')[1]?.length > 2 ? price : price.toFixed(2)} per kWh; ` : '') + `CO₂ at ${EN.co2()} kg per kWh, which varies by country.` : '';
+  const key = [h.key, h.enAt, price, EN.cur(), EN.co2(), $('eChart').clientWidth, $('eChart').hoverX].join();
+  if (key !== lastEnergyDraw) { lastEnergyDraw = key; drawEnergy(h); }
+}
+
+/** Bars per month, like the 14-day bars: this month in the accent with a dashed outline to where it is heading. */
+function drawEnergy(h) {
+  const c = $('eChart'), r = h.en;
+  if (!r || c.hidden) return;
+  const k = canvas(c);
+  if (!k) return;
+  const { g, W, P, msg, grid } = k, months = energyMonths(r);
+  if (!months.some(x => x.days)) return msg('Nothing logged yet.');
+  const step = nice(Math.max(...months.map(x => Math.max(x.wh, x.pace || 0) / 1000)) * 1.05), top = step * 2;
+  grid(step, v => `${+v.toFixed(2)} kWh`);
+  const gap = W < 500 ? 4 : 6, bw = (P.w - 11 * gap) / 12, y = v => P.y1 - Math.min(v / 1000 / top, 1) * P.h;
+  const hover = c.hoverX != null && c.hoverX <= P.x1 ? Math.min(11, Math.max(0, Math.floor((c.hoverX - P.x0 + gap / 2) / (bw + gap)))) : -1;
+  months.forEach((x, i) => {
+    const bx = P.x0 + i * (bw + gap);
+    if (x.pace > x.wh) {
+      g.save(); g.setLineDash([3, 3]); g.strokeStyle = 'rgba(198,242,78,0.55)'; g.lineWidth = 1;
+      g.beginPath(); g.roundRect(bx + 0.5, y(x.pace) + 0.5, bw - 1, y(x.wh) - y(x.pace), 2); g.stroke(); g.restore();
+    }
+    if (x.days) {
+      const bh = Math.max(2, P.y1 - y(x.wh));
+      g.fillStyle = x.now ? '#c6f24e' : i === hover ? '#8f9296' : '#6b6b6b';
+      g.beginPath(); g.roundRect(bx, P.y1 - bh, bw, bh, 2); g.fill();
+    }
+    const name = x.at.toLocaleDateString('en-US', { month: 'short' });
+    g.fillStyle = x.now || i === hover ? '#fff' : '#8f9296'; g.textAlign = 'center';
+    g.fillText(bw >= 24 ? name : name[0], bx + bw / 2, P.y1 + 16);
+  });
+  if (hover >= 0) {
+    const x = months[hover], name = x.at.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    const label = !x.days ? `${name} · not logged` : `${name}${x.now ? ' so far' : ''} · ${EN.kwh(x.wh)} kWh` + (EN.price() ? ` · ${EN.money(x.wh)}` : '');
+    g.font = '600 12px -apple-system, system-ui, sans-serif';
+    const tw = g.measureText(label).width + 16, mid = P.x0 + hover * (bw + gap) + bw / 2, lx = Math.min(Math.max(mid - tw / 2, 0), P.x1 - tw);
+    g.fillStyle = '#24272c'; g.beginPath(); g.roundRect(lx, P.y0, tw, 22, 11); g.fill();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(label, lx + tw / 2, P.y0 + 15);
+  }
+}
+
+/** "This month: 23.4 kWh · $7.02 · 9.4 kg CO₂ together", from each Mac's /summary. */
+function fleetEnergy() {
+  const all = macs(), known = all.filter(x => x.sum?.energy), missing = all.filter(x => !x.sum?.energy).map(shortName);
+  const wh = known.reduce((a, x) => a + x.sum.energy.month, 0);
+  // A Mac that is asleep or on an older Vitals is named rather than silently left out of the sum.
+  const text = all.length < 2 || !known.length ? '' : `This month: ${EN.kwh(wh)} kWh · ${EN.cost(wh)} together`
+    + (missing.length ? `, not counting ${missing.join(', ')}` : '');
+  if (text !== lastFleetEnergy) { $('fleetEnergy').textContent = text; lastFleetEnergy = text; }
+}
+
+$('eSet').addEventListener('click', () => {
+  const f = $('eForm'); f.hidden = !f.hidden;
+  if (!f.hidden) { $('eCur').value = EN.cur(); $('ePrice').value = EN.price() || ''; $('eCO2').value = store.get('energyCO2', '') ? EN.co2() : ''; $('ePrice').focus(); }
+  renderEnergy();
+});
+$('eForm').addEventListener('input', () => {
+  store.set('energyCurrency', $('eCur').value.trim());
+  store.set('energyPrice', $('ePrice').value.replace(',', '.'));
+  store.set('energyCO2', $('eCO2').value.replace(',', '.'));
+  lastEnergy = ''; renderEnergy();
+});
+hoverable($('eChart'), () => renderEnergy());
+window.addEventListener('resize', () => renderEnergy());
+// ===== /Energy & cost =====
 
 // ---------- lifecycle ----------
 document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) { loadHistory(); loadApps(); } });

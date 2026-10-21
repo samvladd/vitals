@@ -57,11 +57,12 @@ enum Fleet {
         var uptime: Double
         var apps: Bool, screen: Bool
         var wake = Wake.mine()                 // how another Mac on its network can wake it (Wake.swift)
+        var energy: Energy.Brief?               // today and this month in Wh, so the fleet card can add them up (Energy.swift)
     }
 
     static func summary(info: MachineInfo) -> Summary {
         var s = Summary(info: info, uptime: ProcessInfo.processInfo.systemUptime,
-                        apps: Control.load() != nil, screen: Control.load()?.screen == true)
+                        apps: Control.load() != nil, screen: Control.load()?.screen == true, energy: Energy.brief())
         let file = logDir.appendingPathComponent(dayFormat.string(from: Date()) + ".csv")
         // Only the end of today's file: the last full line.
         if let h = try? FileHandle(forReadingFrom: file) {
