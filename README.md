@@ -143,9 +143,50 @@ and which processes hold it, every temperature sensor. Storage adds:
 | While a page is open (Mac mini, M4 Pro) | CPU | Memory |
 | --- | --- | --- |
 | `vitals-agent serve` | ~2% of one core | ~6.5 MB |
+| …with the Apps card open (refreshes every 3 s) | +~0.5% of one core | +~0.1 MB |
 | Nobody looking | — | no process |
 
 <br clear="right">
+
+## Quit and open apps from your phone
+
+The dashboard can also list a Mac's apps (one row per app, with the memory and CPU of the app and
+all its helpers, sorted by either) and quit them, force quit them, or open one from Applications. It
+is **off** until you turn it on, on that Mac, naming the devices that may use it:
+
+```bash
+vitals-agent control on --from my-iphone,my-macbook
+```
+
+The names are the first part of each device's Tailscale address (`tailscale status` lists them; run
+the command without `--from` to see yours). `vitals-agent control` shows what is allowed and the
+latest actions; `vitals-agent control off` turns it off again at once.
+
+The Apps card is on that Mac's own page. On the other Mac's page, its tab shows a link there instead:
+one Mac's page never controls the other.
+
+Who can do it. Every request has to pass all of these, checked by the agent on each call:
+
+| Check | What it stops |
+| --- | --- |
+| Reached only through Tailscale, never the internet | Anyone not on your tailnet |
+| The **Tailscale account** must be this Mac's own (Tailscale sets it and removes any forged copy) | Someone you shared a device with, a tagged server |
+| The **device** must be one you named | Other machines signed in to your account, an old server for example |
+| The address must be this Mac's tailnet name | A web page that points its own domain at the Mac (DNS rebinding); this now guards the whole dashboard |
+| A change must come from this Mac's own page | Other sites, and the other Mac's page, posting to it |
+
+What it can do. Only quit, force quit and open apps: no shell, no files, no arguments, and opening
+is limited to the apps in the Applications folders. **Tailscale can't be quit from the page**, so you
+can't lock yourself out. Quit takes two taps; Force quit is offered only when an app is still open
+after 8 seconds (usually a "Save changes?" dialog nobody can see on a headless Mac).
+
+Every action, and every refused request, goes to
+`~/Library/Application Support/Vitals/control.log`, and the last few show at the bottom of the card
+("Quit Safari from iPhone", or in orange, "Blocked a request from …").
+
+The Mac has to be logged in (it is, if the dashboard works), and no macOS permission prompt is
+involved. Anyone who can already run programs as you on that Mac could quit your apps anyway, so the
+checks are about the network, not the Mac itself. For the screen itself, use Screen Sharing over Tailscale.
 
 ## How it works
 
@@ -155,7 +196,7 @@ and which processes hold it, every temperature sensor. Storage adds:
 | `vitals-agent stream` | each Mac | Reads the SMC (temperatures, fans, system watts), IOReport (CPU/GPU/memory energy), CPU ticks, VM stats and I/O counters; prints one JSON line per tick. The remote one runs over a single SSH connection. |
 | root-owned `vitals-agent` | each Mac, only while a fan is off Auto | Writes fan speeds. Started by the agent when you pick Fixed or Curve, stopped when you go back to Auto. |
 | `vitals-agent log` | each Mac, under launchd | Writes the per-minute log to `~/Library/Application Support/Vitals/Logs/`. |
-| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`. |
+| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`; with `control on`, also the Apps card. |
 
 No network traffic leaves your machines except that SSH connection (and, if you set up the phone
 dashboard, Tailscale's encrypted connection to your phone). No analytics, no accounts.
@@ -173,7 +214,8 @@ rm -rf /Applications/Vitals.app "$HOME/Library/Application Support/Vitals"
 
 On the remote Mac, the same with `~/.vitals/vitals-agent` and `rm -rf ~/.vitals`.
 If you set up the phone dashboard, on each Mac also run
-`launchctl bootout gui/$(id -u)/com.vitals.serve; rm ~/Library/LaunchAgents/com.vitals.serve.plist; tailscale serve --https=443 off`.
+`launchctl bootout gui/$(id -u)/com.vitals.serve; rm ~/Library/LaunchAgents/com.vitals.serve.plist; tailscale serve --https=443 off`
+(app control's settings and log are in `~/Library/Application Support/Vitals`, removed with it).
 
 ## License
 

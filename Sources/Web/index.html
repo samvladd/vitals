@@ -33,6 +33,7 @@ body {
   padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   max-width: 560px; margin: 0 auto;
 }
+[hidden] { display: none !important; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; -webkit-user-select: none; user-select: none; }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
@@ -62,7 +63,7 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 /* Cards. On a phone they stack; from 900 px the two columns sit side by side, as in the app. */
 main { display: flex; flex-direction: column; gap: var(--gap); }
 .col { display: contents; }
-#powerCard { order: 1; } #gridCard { order: 2; } #fanCard { order: 3; } #procCard { order: 4; } #asleep { order: 0; }
+#powerCard { order: 1; } #gridCard { order: 2; } #fanCard { order: 3; } #procCard { order: 4; } #appsCard { order: 5; } #asleep { order: 0; }
 .card { background: var(--surface); border-radius: 16px; padding: 16px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h2 { font-size: 15px; font-weight: 600; }
@@ -136,7 +137,7 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 #asleep h2 { font-size: 17px; }
 #asleep p { color: var(--muted); font-size: 14px; margin-top: 6px; }
 body.away #asleep { display: block; }
-body.away #powerCard, body.away #gridCard, body.away #fanCard, body.away #procCard { display: none; }
+body.away #powerCard, body.away #gridCard, body.away #fanCard, body.away #procCard, body.away #appsCard { display: none; }
 
 footer { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 13px; padding: 14px 2px 0; }
 
@@ -148,10 +149,10 @@ footer { display: flex; justify-content: space-between; gap: 12px; color: var(--
 .link { color: var(--muted); font-size: 14px; }
 .link:hover { color: var(--text); }
 
-dialog#sheet { border: 0; padding: 0; margin: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
+dialog.sheet { border: 0; padding: 0; margin: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh;
   background: var(--ground); color: var(--text); overscroll-behavior: contain; }
-dialog#sheet:focus { outline: none; }
-dialog#sheet::backdrop { background: rgba(0, 0, 0, .6); }
+dialog.sheet:focus { outline: none; }
+dialog.sheet::backdrop { background: rgba(0, 0, 0, .6); }
 .sheet-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: calc(env(safe-area-inset-top) + 10px) 16px 10px; background: var(--ground); border-bottom: 1px solid var(--line); }
 .sheet-head h2 { font-size: 17px; }
@@ -173,11 +174,32 @@ html.locked { overflow: hidden; }
 .pillbtn { font-size: 13px; font-weight: 600; border-radius: 999px; padding: 5px 12px; background: var(--raised); }
 .pillbtn:hover:not(:disabled) { background: #2e3238; }
 .pillbtn:disabled { color: var(--faint); cursor: default; }
+/* Apps: quit takes two taps, so a stray one never closes anything. */
+.app { display: grid; grid-template-columns: 32px 1fr auto; gap: 12px; align-items: center; width: 100%; padding: 9px 0; border-bottom: 1px solid var(--line); text-align: left; }
+.app:last-child { border-bottom: 0; }
+.app img { width: 32px; height: 32px; }
+.app .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app .sub { color: var(--faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pillbtn.ask { background: var(--negative); color: var(--ground); }
+.pillbtn.ask:hover { background: var(--negative); }
+#appsErr, #pErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
+#appsErr:empty, #pErr:empty { display: none; }
+.apps-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px; }
+#appsSum { color: var(--faint); font-size: 13px; }
+.recent { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.recent h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.ev { display: grid; grid-template-columns: 1fr auto; gap: 12px; color: var(--faint); font-size: 13px; }
+.ev + .ev { margin-top: 5px; }
+.ev span:last-child { white-space: nowrap; }
+.ev.bad span:first-child { color: var(--warning); }
+a.pillbtn { display: inline-block; color: var(--text); text-decoration: none; margin-top: 12px; }
+input[type=search] { width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px; }
+input[type=search]:focus { outline: 2px solid var(--chart3); }
 .cores.tall { height: 84px; gap: 3px; margin-top: 12px; }
 .fine { color: var(--faint); font-size: 13px; margin-top: 10px; }
 
 @media (min-width: 900px) {
-  dialog#sheet { width: 760px; height: auto; max-height: 88vh; margin: auto; border-radius: 18px; border: 1px solid var(--line); }
+  dialog.sheet { width: 760px; height: auto; max-height: 88vh; margin: auto; border-radius: 18px; border: 1px solid var(--line); }
   .sheet-head { padding-top: 14px; }
   .sheet-body { padding: 20px; }
   #dChart { height: 230px; }
@@ -252,9 +274,16 @@ html.locked { overflow: hidden; }
       <div class="row"><h2>Using the CPU now</h2><div class="head"><span>CPU</span><span>Memory</span></div></div>
       <div id="procs"></div>
     </section>
+    <section class="card" id="appsCard" hidden>
+      <div class="row"><h2 id="appsTitle">Apps</h2><button class="pillbtn" id="openApp">Open…</button></div>
+      <div class="apps-meta" id="appsMeta"><span id="appsSum"></span>
+        <div class="tabs" id="appSort" aria-label="Sort apps by"><button data-k="mem">Memory</button><button data-k="cpu">CPU</button></div></div>
+      <p id="appsErr" role="alert"></p>
+      <div id="apps"></div>
+    </section>
   </div>
 </main>
-<dialog id="sheet" aria-labelledby="dTitle" autofocus tabindex="-1">
+<dialog id="sheet" class="sheet" aria-labelledby="dTitle" autofocus tabindex="-1">
   <div class="sheet-head"><h2 id="dTitle"></h2><button id="done">Done</button></div>
   <div class="sheet-body">
     <section class="card">
@@ -265,6 +294,14 @@ html.locked { overflow: hidden; }
       <div class="legend" id="dLegend"></div>
     </section>
     <div id="dExtra" style="display:flex;flex-direction:column;gap:12px"></div>
+  </div>
+</dialog>
+<dialog id="picker" class="sheet" aria-labelledby="pTitle" tabindex="-1">
+  <div class="sheet-head"><h2 id="pTitle">Open an app</h2><button id="pDone" style="font-weight:600;padding:6px 2px">Done</button></div>
+  <div class="sheet-body">
+    <input id="pSearch" type="search" placeholder="Search apps" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Search apps">
+    <p id="pErr"></p>
+    <section class="card" id="pList" style="padding-top:6px;padding-bottom:6px"></section>
   </div>
 </dialog>
 <footer><span id="foot"></span><span>Samples only while this page is open</span></footer>
@@ -291,6 +328,7 @@ const F = {
   wu: w => w == null ? '—' : F.watts(w) + ' W',
   energy: wh => wh < 1000 ? Math.round(wh) + ' Wh' : (wh / 1000).toFixed(2) + ' kWh',
   gb: (b, d = 1) => (b / 1073741824).toFixed(d),
+  mem: b => b < 1073741824 ? Math.round(b / 1048576) + ' MB' : (b / 1073741824).toFixed(1) + ' GB',
   rate: b => b == null ? '—' : b < 1e3 ? Math.round(b) + ' B/s' : b < 1e6 ? Math.round(b / 1e3) + ' KB/s' : b < 1e9 ? (b / 1e6).toFixed(1) + ' MB/s' : (b / 1e9).toFixed(2) + ' GB/s',
   size: b => b >= 1e12 ? (b / 1e12).toFixed(2) + ' TB' : b >= 1e11 ? Math.round(b / 1e9) + ' GB' : (b / 1e9).toFixed(1) + ' GB',
   temp: t => t == null ? '—' : Math.round(t) + '°',
@@ -412,6 +450,7 @@ function render() {
   cells(s);
   fanCard(h, s);
   procs(s);
+  renderApps();
   renderDetail();
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
 }
@@ -654,7 +693,7 @@ function procs(s) {
 // ---------- input ----------
 function pick(host) {
   st.host = host; store.set('host', host); $('chart').hoverX = null; if (st.detail) $('sheet').close();
-  connect(); loadHistory(); render();
+  connect(); loadHistory(); loadApps(); render();
 }
 $('hosts').addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.h !== st.host) pick(b.dataset.h); });
 $('ranges').addEventListener('click', e => {
@@ -863,9 +902,140 @@ function ssdCard(h) {
     <p class="fine">The drive’s own report (NVMe SMART). “Rated life” is its estimate of wear; most Macs never come close.</p>`, flag);
 }
 
+// ---------- apps: list, quit and open ----------
+// Only on this Mac's own page, and only from the devices `vitals-agent control on` named; the Mac
+// checks that on every request. 'off' hides the card; 'denied' says why. On the other Mac's tab the
+// card only points to that Mac's own page: this page never holds the keys to it.
+const ap = { state: 'unknown', list: [], recent: [], err: '', ask: null, quitting: {}, all: false, installed: null, opening: null,
+             sort: store.get('appSort', 'mem') === 'cpu' ? 'cpu' : 'mem' };
+
+async function loadApps() {
+  if (st.host !== 'here' || document.hidden) return;
+  try {
+    const r = await fetch('apps', { cache: 'no-store' });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 404) ap.state = 'off';
+    else if (!r.ok) { ap.state = 'denied'; ap.denied = j.error || 'This device can’t control apps on this Mac.'; }
+    else {
+      ap.state = 'on'; ap.list = j.apps; ap.recent = j.recent;
+      for (const id in ap.quitting) if (!ap.list.some(a => a.id === id)) delete ap.quitting[id];
+    }
+  } catch {}
+  renderApps();
+}
+
+let lastApps = '', errTimer = 0;
+function appsError(msg) {
+  ap.err = msg; renderApps();
+  clearTimeout(errTimer); errTimer = setTimeout(() => { ap.err = ''; renderApps(); }, 6000);
+}
+
+function renderApps() {
+  const card = $('appsCard'), peer = st.host === 'peer';
+  card.hidden = peer ? !st.peer.apps || st.peer.state === 'off' : !['on', 'denied'].includes(ap.state);
+  if (card.hidden) return;
+  const on = !peer && ap.state === 'on';
+  $('openApp').hidden = $('appsMeta').hidden = !on;
+  $('appsTitle').textContent = peer ? `Apps on ${shortName(st.peer)}` : 'Apps';
+  $('appsErr').textContent = peer ? '' : ap.err;
+  for (const b of $('appSort').children) b.classList.toggle('on', b.dataset.k === ap.sort);
+  let html;
+  if (peer) html = `<p class="fine" style="margin-top:6px">Quit and open ${esc(shortName(st.peer))}’s apps from its own page.</p>
+    <a class="pillbtn" href="${esc(st.peer.base)}" rel="noopener">Open ${esc(shortName(st.peer))}’s page<i class="more">›</i></a>`;
+  else if (ap.state === 'denied') html = `<p class="empty">${esc(ap.denied)}</p>`;
+  else {
+    const list = [...ap.list].sort((a, b) => b[ap.sort] - a[ap.sort]);
+    const shown = ap.all ? list : list.slice(0, 8);
+    const total = ap.list.reduce((t, a) => t + a.mem, 0);
+    $('appsSum').textContent = `${ap.list.length} open · ${F.mem(total)}`;
+    html = shown.map(appRow).join('') || '<p class="empty">No apps open.</p>';
+    if (list.length > 8) html += `<button class="link" data-act="all" style="margin-top:10px">${ap.all ? 'Show fewer' : `Show all ${list.length}`}<i class="more">›</i></button>`;
+    if (ap.recent.length) html += `<div class="recent"><h3>Recent activity</h3>${ap.recent.slice(0, 3).map(e =>
+      `<div class="ev${e.kind === 'done' ? '' : ' bad'}"><span>${esc(e.text)}</span><span>${ago(e.t)}</span></div>`).join('')}</div>`;
+  }
+  if (html !== lastApps) { $('apps').innerHTML = html; lastApps = html; }   // unchanged HTML keeps a tap in flight intact
+}
+
+function appRow(a) {
+  const q = ap.quitting[a.id], stuck = q && Date.now() - q.at > 8000;
+  const ask = kind => ap.ask === `${kind}:${a.id}`;
+  const btn = (kind, label) => `<button class="pillbtn${ask(kind) ? ' ask' : ''}" data-act="${kind}" data-id="${esc(a.id)}"
+    aria-label="${ask(kind) ? `Tap again to ${label.toLowerCase()} ${esc(a.name)}` : `${label} ${esc(a.name)}`}">${ask(kind) ? label + '?' : label}</button>`;
+  const right = a.locked ? '<span class="sub">Protected</span>'
+    : stuck ? btn('force', 'Force quit') : q ? `<span class="sub">${q.force ? 'Force quitting…' : 'Quitting…'}</span>` : btn('quit', 'Quit');
+  const sub = stuck ? 'Still open: it may be asking to save' : a.locked ? 'Keeps this page reachable'
+    : `${F.mem(a.mem)} · ${a.cpu.toFixed(1)}% CPU${a.copies > 1 ? ` · ${a.copies} copies` : ''}${a.hidden ? ' · hidden' : ''}`;
+  return `<div class="app"><img src="apps/icon?id=${encodeURIComponent(a.id)}" alt="" loading="lazy">
+    <div style="min-width:0"><div class="nm">${esc(a.name)}</div><div class="sub"${stuck ? ' style="color:var(--warning)"' : ''}>${sub}</div></div>${right}</div>`;
+}
+
+async function quitApp(a, force) {
+  ap.ask = null;
+  ap.quitting[a.id] = { at: Date.now(), force };
+  renderApps();
+  try {
+    const r = await fetch('apps/quit', { method: 'POST', headers: { 'X-Vitals': '1' }, body: `${force ? 'force' : 'quit'} ${a.id}` });
+    if (!r.ok) { delete ap.quitting[a.id]; appsError((await r.json().catch(() => ({}))).error || 'The Mac refused.'); }
+  } catch { delete ap.quitting[a.id]; appsError('The Mac did not answer.'); }
+  loadApps(); setTimeout(loadApps, 1200);     // most apps are gone within a second
+}
+
+let askTimer = 0;
+$('apps').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'all') { ap.all = !ap.all; return renderApps(); }
+  const a = ap.list.find(x => x.id === b.dataset.id);
+  if (!a) return;
+  const key = `${b.dataset.act}:${a.id}`;
+  if (ap.ask === key) return quitApp(a, b.dataset.act === 'force');
+  ap.ask = key; renderApps();
+  clearTimeout(askTimer);
+  askTimer = setTimeout(() => { ap.ask = null; renderApps(); }, 4000);
+});
+$('appSort').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  ap.sort = b.dataset.k; store.set('appSort', ap.sort); renderApps();
+});
+
+$('openApp').addEventListener('click', async () => {
+  $('pSearch').value = ''; $('pErr').textContent = ''; ap.opening = null;
+  $('picker').showModal(); $('picker').focus();
+  document.documentElement.classList.add('locked');
+  renderPicker();
+  if (!ap.installed) {
+    try { const r = await fetch('apps/installed', { cache: 'no-store' }); if (r.ok) ap.installed = await r.json(); } catch {}
+    renderPicker();
+  }
+});
+function renderPicker() {
+  if (!ap.installed) { $('pList').innerHTML = '<p class="empty">Loading…</p>'; return; }
+  const q = $('pSearch').value.trim().toLowerCase(), running = new Set(ap.list.map(a => a.id));
+  const list = ap.installed.filter(a => !q || a.name.toLowerCase().includes(q));
+  $('pList').innerHTML = list.map(a => `<button class="app" data-id="${esc(a.id)}"><img src="apps/icon?id=${encodeURIComponent(a.id)}" alt="" loading="lazy">
+    <span class="nm">${esc(a.name)}</span><span class="sub">${ap.opening === a.id ? 'Opening…' : running.has(a.id) ? 'Running' : ''}</span></button>`).join('')
+    || '<p class="empty">No apps match.</p>';
+}
+$('pSearch').addEventListener('input', renderPicker);
+$('pDone').addEventListener('click', () => $('picker').close());
+$('picker').addEventListener('close', () => document.documentElement.classList.remove('locked'));
+$('pList').addEventListener('click', async e => {
+  const b = e.target.closest('[data-id]');
+  if (!b || ap.opening) return;
+  ap.opening = b.dataset.id; $('pErr').textContent = ''; renderPicker();
+  try {
+    const r = await fetch('apps/open', { method: 'POST', headers: { 'X-Vitals': '1' }, body: ap.opening });
+    if (r.ok) { $('picker').close(); loadApps(); setTimeout(loadApps, 1500); }
+    else $('pErr').textContent = (await r.json().catch(() => ({}))).error || 'The Mac refused.';
+  } catch { $('pErr').textContent = 'The Mac did not answer.'; }
+  ap.opening = null; renderPicker();
+});
+
 // ---------- lifecycle ----------
-document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) loadHistory(); });
-setInterval(() => { if (!document.hidden) loadHistory(); }, 60000);
+document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) { loadHistory(); loadApps(); } });
+setInterval(() => { if (!document.hidden) loadHistory(); if (ap.state !== 'on') loadApps(); }, 60000);
+setInterval(() => { if (ap.state === 'on') loadApps(); }, 3000);
 setInterval(() => {         // a stream that went quiet: the Mac fell asleep or left the tailnet
   const h = cur();
   if (h === st.peer && h.state === 'live' && now() - h.seen > 8) { h.state = 'off'; render(); }
@@ -877,17 +1047,17 @@ setInterval(() => {         // a fan off Auto stays there only while this page k
 
 // The other Mac's name and whether it is awake, without starting its sampling.
 async function probePeer() {
-  if (!st.peer.base || st.peer.es) return;
+  if (!st.peer.base) return;
   try {
     const c = await fetch(st.peer.base + 'config', { cache: 'no-store' }).then(r => r.json());
-    st.peer.info = c.info; store.set('peerInfo', JSON.stringify(c.info));
+    st.peer.info = c.info; st.peer.apps = !!c.apps; store.set('peerInfo', JSON.stringify(c.info));
     if (st.peer.state !== 'live') st.peer.state = 'up';
-  } catch { st.peer.state = 'off'; }
+  } catch { if (st.peer.state !== 'live') st.peer.state = 'off'; }
   render();
 }
 
 fetch('config', { cache: 'no-store' }).then(r => r.json()).then(c => { st.peer.base = c.peer || null; st.here.info = c.info; })
-  .catch(() => {}).finally(() => { if (!st.peer.base) st.host = 'here'; connect(); loadHistory(); probePeer(); render(); });
+  .catch(() => {}).finally(() => { if (!st.peer.base) st.host = 'here'; connect(); loadHistory(); loadApps(); probePeer(); render(); });
 render();
 </script>
 </body>
