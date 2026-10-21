@@ -4,7 +4,7 @@ import AppKit
 /// and the processes behind it on the right. Everything is drawn here in one pass.
 final class Dashboard: Canvas {
     static let width: CGFloat = 660
-    let links: [HostLink]
+    var links: [HostLink] { didSet { needsDisplay = true } }
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
     var onSetup: ((HostLink) -> Void)?
@@ -41,8 +41,7 @@ final class Dashboard: Canvas {
     override func render() {
         fill(bounds, Theme.ground)
         let l = link, s = l.snap
-        header()
-        var y: CGFloat = 60
+        var y = header()
         title(l, s, &y)
         let top = y
         var left = top, right = top
@@ -62,27 +61,55 @@ final class Dashboard: Canvas {
 
     // MARK: header and title
 
-    private func header() {
+    /// The mark and a tab per Mac; returns where the title starts. Up to three Macs sit beside the
+    /// mark as today. More would overflow the row, so they get a row of chips of their own, every
+    /// Mac still one click away, and the first row sums up the fleet instead.
+    private func header() -> CGFloat {
         // The mark: the Mac mini seen from above, with its one status light.
         let m = NSRect(x: pad, y: 18, width: 18, height: 18)
         fill(m, Theme.accent, radius: 5)
         fill(NSRect(x: m.midX - 2, y: m.maxY - 6, width: 4, height: 2), Theme.ground, radius: 1)
         drawText("Vitals", Theme.font(14, .semibold), Theme.text, pad + 26, 18)
+        let current = link
+        func dot(_ l: HostLink) -> NSColor { switch l.state { case .live: return Theme.accent; case .offline: return Theme.negative; default: return Theme.warning } }
 
-        var x = Self.width - pad
-        for l in links.reversed() {
-            let name = l.shortName
-            let f = Theme.font(13, l.key == Prefs.selected ? .medium : .regular)
-            let w = textWidth(name, f)
-            let r = NSRect(x: x - w - 14, y: 10, width: w + 14, height: 34)
-            let hovered = hit(r, "tab.\(l.key)") { [weak self] _ in Prefs.selected = l.key; self?.selectionChanged() }
-            let active = l.key == Prefs.selected
-            drawText(name, f, active || hovered ? Theme.text : Theme.faint, x, 18, align: .right)
-            let dot: NSColor = { switch l.state { case .live: return Theme.accent; case .offline: return Theme.negative; default: return Theme.warning } }()
-            fill(NSRect(x: x - w - 12, y: 24, width: 6, height: 6), dot, radius: 3)
-            x -= w + 30
+        guard links.count > 3 else {
+            var x = Self.width - pad
+            for l in links.reversed() {
+                let name = l.name(among: links), active = l === current
+                let f = Theme.font(13, active ? .medium : .regular)
+                let w = textWidth(name, f)
+                let r = NSRect(x: x - w - 14, y: 10, width: w + 14, height: 34)
+                let hovered = hit(r, "tab.\(l.key)") { [weak self] _ in Prefs.selected = l.key; self?.selectionChanged() }
+                drawText(name, f, active || hovered ? Theme.text : Theme.faint, x, 18, align: .right)
+                fill(NSRect(x: x - w - 12, y: 24, width: 6, height: 6), dot(l), radius: 3)
+                x -= w + 30
+            }
+            hline(0, 52, Self.width, Theme.line)
+            return 60
         }
-        hline(0, 52, Self.width, Theme.line)
+
+        let live = links.filter { $0.state == .live }
+        let total = live.compactMap { $0.snap?.wSystem }.reduce(0, +)
+        drawText("\(live.count) of \(links.count) Macs live · \(Fmt.wattsUnit(live.isEmpty ? nil : total)) in all",
+                 Theme.font(12), Theme.faint, Self.width - pad, 20, align: .right)
+        let f = Theme.font(12, .medium), inner: CGFloat = 32, spacing: CGFloat = 6
+        let names = links.map { $0.name(among: links) }
+        let natural = names.map { textWidth($0, f) }
+        let cap = labelCap(natural, fitting: Self.width - pad * 2 - CGFloat(links.count) * inner - CGFloat(links.count - 1) * spacing)
+        var x = pad
+        for (i, l) in links.enumerated() {
+            let r = NSRect(x: x, y: 48, width: min(natural[i], cap) + inner, height: 26)
+            let active = l === current
+            let hovered = hit(r, "tab.\(l.key)") { [weak self] _ in Prefs.selected = l.key; self?.selectionChanged() }
+            fill(r, active ? Theme.raised : Theme.ground, radius: 13)
+            stroke(r, active ? Theme.chart3 : hovered ? Theme.chart4 : Theme.line, radius: 13)
+            fill(NSRect(x: r.minX + 12, y: r.midY - 3, width: 6, height: 6), dot(l), radius: 3)
+            drawText(names[i], f, active || hovered ? Theme.text : Theme.muted, r.minX + 22, r.minY + 5, maxWidth: cap)
+            x = r.maxX + spacing
+        }
+        hline(0, 86, Self.width, Theme.line)
+        return 94
     }
 
     var selectionChanged: () -> Void = {}
@@ -273,8 +300,8 @@ final class Dashboard: Canvas {
             drawText(label, Theme.font(11), Theme.faint, px(t), plot.maxY + 6, align: i == 0 ? .left : i == 3 ? .right : .center)
         }
         guard pts.count > 1 else {
-            let msg = Prefs.range == 0 ? "Collecting the first readings…" : "The log starts filling from the first minute the agent ran."
-            drawText(msg, Theme.font(12), Theme.faint, plot.midX, plot.midY - 20, align: .center)
+            let msg = Prefs.range == 0 ? "Collecting the first readings…" : "Nothing logged yet for this range."
+            drawText(msg, Theme.font(12), Theme.faint, plot.midX, plot.midY - 20, align: .center, maxWidth: plot.width)
             return
         }
         // Break the line where readings are missing rather than drawing across the gap.

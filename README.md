@@ -3,8 +3,8 @@
 <h1 align="center">Vitals</h1>
 
 <p align="center"><b>Your Macs, in your pocket.</b><br>
-A tiny menu bar app and phone dashboard that watches your Macs, controls their fans, quits and opens<br>
-their apps, and puts their screen on your iPhone: from anywhere, with nothing open to the internet.</p>
+A tiny menu bar app and phone dashboard for your whole fleet of Macs: watch them, cool them, quit and<br>
+open their apps, and use their screens from your iPhone. From anywhere, with nothing open to the internet.</p>
 
 ![Vitals on an iPhone: the Mac mini's apps with Quit buttons, and its screen sideways with a trackpad pointer and a magnifier](docs/hero.jpg)
 
@@ -23,6 +23,7 @@ subscription or a cloud account.
 | Watts, CPU per core, memory pressure, temperatures, storage, SSD health and a year of history, for every Mac | A ~5 MB agent on each Mac |
 | Fan control: Auto, Fixed or a temperature Curve, with a 95 °C safety ceiling | Nothing until you move a fan |
 | A phone dashboard: a Home Screen app on your iPhone | **No process at all** until a page opens it |
+| **Your whole fleet**: every Mac of yours found through Tailscale, at a glance, with the watts they draw together | Nothing to configure: set up a Mac and it joins |
 | Quit, force quit and open any app on a Mac, from your phone | Off until you name the devices allowed |
 | **The Mac's screen on your phone**: see it and use it, with trackpad gestures, a magnifier, a keyboard with ⌘ ⌥ ⌃ ⇧, sideways | A 57 KB viewer, ~1 MB on the Mac while connected, nothing after |
 | No App Store, no developer account, no cloud service, no port open to the internet | Your own [Tailscale](https://tailscale.com) network |
@@ -105,9 +106,9 @@ notarized, so macOS will block the first launch; allow it once in System Setting
 xattr -dr com.apple.quarantine /Applications/Vitals.app
 ```
 
-Then open Vitals, click the readings in the menu bar → **Settings**, and enter your remote Mac's SSH
-host (default `mac-mini`). Vitals copies its agent to `~/.vitals/` on that Mac and starts the logger
-there by itself.
+Then open Vitals, click the readings in the menu bar → **Settings**, and add your other Macs by SSH
+host (`mac-mini`, or one of your Tailscale Macs, which Settings suggests). Add as many as you like.
+Vitals copies its agent to `~/.vitals/` on each one and starts its logger there by itself.
 
 ![Settings](docs/settings.png)
 
@@ -149,8 +150,7 @@ On each Mac you want to see (the agent is at `~/.vitals/vitals-agent` on a remot
 `~/Library/Application Support/Vitals/bin/vitals-agent` on the one running the app):
 
 ```bash
-vitals-agent install-serve --peer https://other-mac.your-tailnet.ts.net \
-  --allow-origin https://this-mac.your-tailnet.ts.net,https://other-mac.your-tailnet.ts.net
+vitals-agent install-serve
 ```
 
 This registers `com.vitals.serve` with launchd and runs `tailscale serve --bg 8787`. The first time,
@@ -162,9 +162,10 @@ Safari → Share → **Add to Home Screen**; it opens full-screen like an app.
   the server when a page connects; it samples once a second while a page is on screen and exits a
   minute after the last one closes. Idle, there is no extra process at all. History comes from the
   per-minute log the agent already keeps.
-- **Two Macs, no relay.** The page on one Mac reads the other straight from its own address; the
-  other Mac allows that with `--allow-origin`. When it is asleep the tab says so and when it was last
-  seen. From that page the other Mac's fans are read-only; open its own page to change them.
+- **Any number of Macs, no relay.** Each page finds your other Macs through Tailscale and reads them
+  straight from their own addresses (see [Your fleet](#your-fleet)). When one is asleep its tile says
+  so and when it was last seen. From one Mac's page the others are read-only; open a Mac's own page to
+  change its fans or apps. (`--peer https://…` still adds a Mac that isn't on your Tailscale account.)
 - **Fans** work as in the app, on the Mac whose page you opened (after the one-time fan setup). They
   go back to **Auto** 30 seconds after the last page closes, or 90 seconds after a page stops checking
   in (phone locked), and the 95 °C ceiling still applies.
@@ -191,6 +192,24 @@ and which processes hold it, every temperature sensor. Storage adds:
 | Nobody looking | — | no process |
 
 <br clear="right">
+
+## Your fleet
+
+Every dashboard finds your other Macs by itself: Tailscale knows which devices are yours, and any of
+them running the dashboard joins the list. Set up Vitals on a new Mac and it appears on all of them;
+there is no list of addresses to keep.
+
+- **Your Macs**, at the top of the page: a tile per Mac with its watts, CPU, temperature and memory,
+  and the fleet's watts together. Tap one to see everything about it.
+- The tiles read each Mac's last logged minute, so the overview starts no sampling anywhere; only
+  the Mac you open streams live.
+- A Mac that is asleep says when it was last seen. One of yours without Vitals yet is shown too, as
+  a reminder to set it up.
+- In the menu bar app, add as many Macs as you like in Settings (your Tailscale Macs are suggested);
+  with three or more, the menu bar shows the fleet's total watts and its hottest CPU.
+
+Each Mac's page may read the others' dashboards (your Macs only, found through Tailscale), never
+change anything on them: quitting apps, fans and the screen stay on each Mac's own page.
 
 ## Quit and open apps from your phone
 

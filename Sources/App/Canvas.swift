@@ -7,6 +7,8 @@ class Canvas: NSView {
     private var hits: [Hit] = []
     private(set) var hover: String?
     private var pressed: Hit?
+    /// How far the content is scrolled up: Settings with many Macs can be taller than the screen.
+    var scrollY: CGFloat = 0
 
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -20,6 +22,7 @@ class Canvas: NSView {
     override func draw(_ dirty: NSRect) {
         let t0 = CFAbsoluteTimeGetCurrent()
         hits.removeAll(keepingCapacity: true)
+        if scrollY != 0 { NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -scrollY) }
         render()
         Canvas.draws += 1; Canvas.drawTime += CFAbsoluteTimeGetCurrent() - t0
     }
@@ -42,25 +45,27 @@ class Canvas: NSView {
     }
 
     private func hitAt(_ p: NSPoint) -> Hit? { hits.last { $0.rect.contains(p) } }
+    /// The event's position in content coordinates (where the hit regions were registered).
+    private func point(_ e: NSEvent) -> NSPoint { let p = convert(e.locationInWindow, from: nil); return NSPoint(x: p.x, y: p.y + scrollY) }
 
     override func mouseMoved(with e: NSEvent) {
-        let id = hitAt(convert(e.locationInWindow, from: nil))?.id
+        let id = hitAt(point(e))?.id
         if id != hover { hover = id; needsDisplay = true }
         (id == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
     }
     override func mouseExited(with e: NSEvent) { if hover != nil { hover = nil; needsDisplay = true }; NSCursor.arrow.set() }
 
     override func mouseDown(with e: NSEvent) {
-        let p = convert(e.locationInWindow, from: nil)
+        let p = point(e)
         pressed = hitAt(p)
         if let h = pressed, h.drag { h.action(p) }
         needsDisplay = true
     }
     override func mouseDragged(with e: NSEvent) {
-        if let h = pressed, h.drag { h.action(convert(e.locationInWindow, from: nil)) }
+        if let h = pressed, h.drag { h.action(point(e)) }
     }
     override func mouseUp(with e: NSEvent) {
-        let p = convert(e.locationInWindow, from: nil)
+        let p = point(e)
         if let h = pressed, !h.drag, h.rect.contains(p) { h.action(p) }
         pressed = nil
         needsDisplay = true
@@ -113,6 +118,19 @@ func vline(_ x: CGFloat, _ y: CGFloat, _ h: CGFloat, _ c: NSColor) {
     c.setStroke()
     let p = NSBezierPath(); p.move(to: NSPoint(x: x + 0.5, y: y)); p.line(to: NSPoint(x: x + 0.5, y: y + h))
     p.lineWidth = 1; p.stroke()
+}
+
+/// The widest any one label may be so that all of them fit in `total`: short labels keep their width
+/// and the long ones share what is left (and are truncated to it).
+func labelCap(_ natural: [CGFloat], fitting total: CGFloat) -> CGFloat {
+    guard natural.reduce(0, +) > total else { return .greatestFiniteMagnitude }
+    var rest = total
+    for (i, w) in natural.sorted().enumerated() {
+        let share = rest / CGFloat(natural.count - i)
+        if w > share { return max(24, share) }
+        rest -= w
+    }
+    return .greatestFiniteMagnitude
 }
 
 /// A pale pill with dark text of the same hue; returns its width.

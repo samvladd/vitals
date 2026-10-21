@@ -254,7 +254,11 @@ func controlCommand() {
 let tailscaleCLI = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
     .first { FileManager.default.isExecutableFile(atPath: $0) }
 
-struct TailnetNode { var name: String, dns: String, host: String, os: String, user: Int, ips: [String], tags: [String] }
+struct TailnetNode {
+    var name: String, dns: String, host: String, os: String
+    var online: Bool
+    var user: Int, ips: [String], tags: [String]
+}
 
 /// "iPhone" or "MacBook" rather than iphone182 or shmulis-macbook-pro-2, for the log and the page.
 /// Falls back to the tailnet name when two of your devices would read the same.
@@ -274,6 +278,9 @@ func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
     guard let cli = tailscaleCLI else { return nil }
     let p = Process(), out = Pipe()
     p.executableURL = URL(fileURLWithPath: cli); p.arguments = ["status", "--json"]
+    // The Mac app's binary is also its CLI, and started from a background job it would try to open the
+    // app instead ("The Tailscale GUI failed to start"); this tells it to behave as the CLI.
+    p.environment = ProcessInfo.processInfo.environment.merging(["TAILSCALE_BE_CLI": "1"]) { _, b in b }
     p.standardOutput = out; p.standardError = FileHandle.nullDevice
     guard (try? p.run()) != nil else { return nil }
     let data = out.fileHandleForReading.readDataToEndOfFile()
@@ -283,7 +290,7 @@ func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
         guard let dns = (d["DNSName"] as? String)?.lowercased(), !dns.isEmpty else { return nil }
         let host = dns.hasSuffix(".") ? String(dns.dropLast()) : dns
         return TailnetNode(name: String(host.split(separator: ".").first ?? ""), dns: host, host: d["HostName"] as? String ?? "",
-                           os: d["OS"] as? String ?? "", user: (d["UserID"] as? NSNumber)?.intValue ?? -1,
+                           os: d["OS"] as? String ?? "", online: d["Online"] as? Bool ?? true, user: (d["UserID"] as? NSNumber)?.intValue ?? -1,
                            ips: d["TailscaleIPs"] as? [String] ?? [], tags: d["Tags"] as? [String] ?? [])
     }
     guard let self_ = node(me), let users = j["User"] as? [String: [String: Any]],

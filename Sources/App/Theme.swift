@@ -75,13 +75,36 @@ enum Fmt {
 /// Settings, stored in UserDefaults.
 enum Prefs {
     private static let d = UserDefaults.standard
-    static var remoteHost: String { get { d.string(forKey: "remoteHost") ?? "mac-mini" } set { d.set(newValue, forKey: "remoteHost") } }
-    static var menuBar: String { get { d.string(forKey: "menuBar") ?? "both" } set { d.set(newValue, forKey: "menuBar") } }
-    static var selected: String { get { d.string(forKey: "selected") ?? "remote" } set { d.set(newValue, forKey: "selected") } }
+    /// The other Macs, as SSH hosts, in tab order. Each is keyed "ssh:<host>"; this Mac is "local".
+    static var remoteHosts: [String] {
+        get { d.stringArray(forKey: "remoteHosts") ?? [d.string(forKey: "remoteHost") ?? "mac-mini"] }
+        set { d.set(newValue, forKey: "remoteHosts") }
+    }
+    static func key(_ host: String) -> String { "ssh:\(host)" }
+    /// "all", "local" or one host key.
+    static var menuBar: String { get { d.string(forKey: "menuBar") ?? "all" } set { d.set(newValue, forKey: "menuBar") } }
+    static var selected: String { get { d.string(forKey: "selected") ?? remoteHosts.first.map(key) ?? "local" } set { d.set(newValue, forKey: "selected") } }
     static var range: Int { get { d.object(forKey: "range") as? Int ?? 1 } set { d.set(newValue, forKey: "range") } }
     static var price: Double { get { d.double(forKey: "price") } set { d.set(newValue, forKey: "price") } }
     static var curveLow: Double { get { d.object(forKey: "curveLow") as? Double ?? 50 } set { d.set(newValue, forKey: "curveLow") } }
     static var curveHigh: Double { get { d.object(forKey: "curveHigh") as? Double ?? 85 } set { d.set(newValue, forKey: "curveHigh") } }
     static func fanPolicy(_ host: String) -> String { d.string(forKey: "fan.\(host)") ?? "auto" }
     static func setFanPolicy(_ host: String, _ v: String) { d.set(v, forKey: "fan.\(host)") }
+    static func forget(_ host: String) { d.removeObject(forKey: "fan.\(host)") }
+
+    /// Once, on the first launch with a host list: the two-Mac settings ("remote", "both") move to
+    /// host keys, so the Mac you had keeps its tab, its menu bar choice and its fan mode.
+    static func migrate() {
+        guard d.object(forKey: "remoteHosts") == nil else { return }
+        let hosts = remoteHosts
+        remoteHosts = hosts
+        let first = key(hosts[0])
+        if d.string(forKey: "selected") == "remote" { selected = first }
+        switch d.string(forKey: "menuBar") {
+        case "both": menuBar = "all"
+        case "remote": menuBar = first
+        default: break
+        }
+        if let f = d.string(forKey: "fan.remote") { setFanPolicy(first, f); forget("remote") }
+    }
 }
