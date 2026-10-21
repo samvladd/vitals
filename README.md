@@ -2,15 +2,42 @@
 
 <h1 align="center">Vitals</h1>
 
-<p align="center">A tiny menu bar app that watches your Macs — this one and any other over SSH —<br>
-and controls their fans. Watts, CPU, memory pressure, temperatures, and a year of power history.</p>
+<p align="center"><b>Your Macs, in your pocket.</b><br>
+A tiny menu bar app and phone dashboard that watches your Macs, controls their fans, quits and opens<br>
+their apps, and puts their screen on your iPhone: from anywhere, with nothing open to the internet.</p>
 
 <p align="center"><img src="docs/menubar.png" alt="Vitals in the menu bar: watts over CPU temperature for each Mac"></p>
 
 ![The Mac mini view: 4.6 W now, a one-hour power chart, per-core CPU bars, memory pressure, thermals, fan and processes](docs/mac-mini.png)
 
 Built for a headless Mac mini (a home server, a build box, an AI rig) that you want to keep an eye on
-from your laptop — without installing a 100 MB monitoring suite on either.
+and a hand on, from your laptop or your phone, without a 100 MB monitoring suite, a remote-desktop
+subscription or a cloud account.
+
+## At a glance
+
+| You get | It costs |
+| --- | --- |
+| Watts, CPU per core, memory pressure, temperatures, storage, SSD health and a year of history, for every Mac | A ~5 MB agent on each Mac |
+| Fan control: Auto, Fixed or a temperature Curve, with a 95 °C safety ceiling | Nothing until you move a fan |
+| A phone dashboard: a Home Screen app on your iPhone | **No process at all** until a page opens it |
+| Quit, force quit and open any app on a Mac, from your phone | Off until you name the devices allowed |
+| **The Mac's screen on your phone**: see it and use it, with trackpad gestures, a magnifier, a keyboard with ⌘ ⌥ ⌃ ⇧, sideways | A 57 KB viewer, ~1 MB on the Mac while connected, nothing after |
+| No App Store, no developer account, no cloud service, no port open to the internet | Your own [Tailscale](https://tailscale.com) network |
+
+What makes it unusual:
+
+- **Zero cost when nobody is looking.** macOS's launchd holds the dashboard's port and starts the
+  server only when a page connects; a minute after the last one leaves, it is gone.
+- **Remote control without a remote-control app.** The screen comes from macOS's own Screen Sharing;
+  Vitals adds a small relay and a phone-first viewer around it. It also switches a Retina Mac to the
+  same layout at 1x while you watch, so a quarter of the pixels cross the network, and macOS
+  switches it back by itself.
+- **Security in layers.** Your tailnet only; your Tailscale account only; only the devices you
+  named; only from the Mac's own page; and for the screen, the Mac's own login on top. Every action,
+  and every refused attempt, is logged and shown.
+- **One native binary per Mac, no dependencies.** AppKit and a hand-written HTTP and WebSocket
+  server; the only third-party code is the screen viewer, noVNC, bundled unmodified.
 
 ## What it shows
 
@@ -35,6 +62,8 @@ from your laptop — without installing a 100 MB monitoring suite on either.
 | --- | --- | --- |
 | Vitals app | ~20–35 MB | ~0.3% |
 | Agent on each Mac | ~5 MB | ~0.2% |
+| Phone dashboard, nobody looking | no process | — |
+| Screen session open (4K Mac) | ~3 MB for Vitals' server | relay < 1 ms added latency |
 
 Native AppKit drawn in a single view: no web view, no SwiftUI, no dependencies. Sampling is 1 s while
 the panel is open, 5 s for the menu bar, and the costly process scan only runs while you are looking.
@@ -188,6 +217,69 @@ The Mac has to be logged in (it is, if the dashboard works), and no macOS permis
 involved. Anyone who can already run programs as you on that Mac could quit your apps anyway, so the
 checks are about the network, not the Mac itself. For the screen itself, use Screen Sharing over Tailscale.
 
+## Control the screen
+
+With app control on, a Mac can also show its screen on the dashboard: see it and use it from your
+phone or another computer, anywhere on your tailnet. Turn it on, on that Mac:
+
+```bash
+vitals-agent screen on
+```
+
+The Apps card then has a **Screen** button. macOS does the hard part: Vitals relays the page to the
+Mac's own Screen Sharing (turn it on in System Settings › General › Sharing), which asks for the
+Mac's login. The password goes from the page to macOS, encrypted, and Vitals never sees or keeps it.
+
+On a phone:
+
+| Gesture | Does |
+| --- | --- |
+| Slide one finger | Moves the pointer, like a trackpad; a magnifier shows what is under it |
+| Tap | Click (tap twice to double-click) |
+| Hold, then slide | Drag |
+| Hold and let go, or tap with two fingers | Right click |
+| Two fingers | Scroll, or pinch to zoom in on the picture |
+
+The keyboard button opens the phone's keyboard with a row for esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows (the
+modifiers stay down for the next key: ⌘ then C copies). The menu has Spotlight, app switching,
+Mission Control and a box to paste text that is then typed on the Mac. Turn the phone sideways for
+the full picture with the controls in a rail beside it. On a computer the mouse and keyboard just
+work. Lock the phone or switch apps and come back: it reconnects by itself.
+
+**Faster by default.** A Retina screen is four pixels for each point. While you are connected, the
+Mac switches to the matching non-Retina mode (same size, windows stay put), so Screen Sharing sends
+a quarter of the data; macOS switches back by itself when the session ends. **Picture: sharper** in
+the menu keeps full Retina.
+
+**Same checks, plus macOS's.** Every request passes app control's checks (your Tailscale account, a
+named device, this Mac's address and its own page), and then macOS asks for the Mac's login. The relay
+only ever connects to Screen Sharing on the Mac itself, and holds at most three sessions. A session
+ends when the page closes, after 10 minutes without a touch or a key from that device, or when the
+page stops answering (the Mac checks every 25 s, so a phone that lost signal is let go within 75 s,
+not left signed in). Each one is in the activity log. `vitals-agent screen off` turns it off.
+
+Screen Sharing itself listens on the Mac's network too, Vitals or not, and its password is what
+guards that door. In System Settings › General › Sharing › Screen Sharing, set **Allow access for**
+to only your user.
+
+**Light.** The viewer ([noVNC](https://github.com/novnc/noVNC) 1.7.0, MPL-2.0, bundled unmodified) is
+57 KB and is only sent when you open the page. On the Mac the relay adds well under a millisecond and
+about 1 MB while a session is open; a minute after you leave, nothing is running.
+
+| Measured on an M-series Mac, through Tailscale | Directly | Through Vitals |
+| --- | --- | --- |
+| Input to screen, 1080p | 0.3 ms | 0.6 ms |
+| Input to screen, 4K | 0.4 ms | 0.8 ms |
+| Vitals' server memory during a 4K session | — | 3.3 MB |
+| Relay CPU at 126 MB/s (far beyond real use) | — | 4% of one core |
+
+How it was tested: against the real Screen Sharing on two Macs up to Apple's sign-in, and end to end
+against a stand-in VNC server that logs every click and key it receives. Every gesture and key was
+checked at the receiving end (taps, slow taps, holds, drags, right clicks, scroll steps, a cancelled
+system swipe that must not click, Shift for capitals, Backspace both ways iOS sends it), as were the
+refusals (wrong origin, cross-site, an unlisted device, DNS rebinding, a fourth session, a malformed
+frame, a half-sent request, a phone gone silent) and that the Mac's display mode comes back by itself.
+
 ## How it works
 
 | Piece | Runs on | Job |
@@ -196,7 +288,7 @@ checks are about the network, not the Mac itself. For the screen itself, use Scr
 | `vitals-agent stream` | each Mac | Reads the SMC (temperatures, fans, system watts), IOReport (CPU/GPU/memory energy), CPU ticks, VM stats and I/O counters; prints one JSON line per tick. The remote one runs over a single SSH connection. |
 | root-owned `vitals-agent` | each Mac, only while a fan is off Auto | Writes fan speeds. Started by the agent when you pick Fixed or Curve, stopped when you go back to Auto. |
 | `vitals-agent log` | each Mac, under launchd | Writes the per-minute log to `~/Library/Application Support/Vitals/Logs/`. |
-| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`; with `control on`, also the Apps card. |
+| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`; with `control on`, also the Apps card, and with `screen on` the Screen page. |
 
 No network traffic leaves your machines except that SSH connection (and, if you set up the phone
 dashboard, Tailscale's encrypted connection to your phone). No analytics, no accounts.

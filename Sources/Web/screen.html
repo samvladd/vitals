@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Screen · Vitals</title>
+<meta name="theme-color" content="#0c0d0f">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<link rel="icon" href="../icon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<style>
+/* The dashboard's tokens (Sources/Web/index.html). */
+:root {
+  --ground: #0c0d0f; --surface: #15171a; --raised: #24272c; --line: #202328;
+  --text: #fff; --muted: #b4b4b4; --faint: #8f9296;
+  --accent: #c6f24e; --warning: #e5a93b; --negative: #e5566f; --chart3: #6b6b6b;
+  --bar: calc(48px + env(safe-area-inset-top));
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+html { touch-action: manipulation; }
+html, body { height: 100%; background: #000; color: var(--text); overflow: hidden; overscroll-behavior: none; }
+body { font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+/* Top bar */
+#bar { position: fixed; inset: 0 0 auto 0; height: var(--bar); padding: env(safe-area-inset-top) max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left));
+  display: flex; align-items: center; gap: 4px; background: rgba(12, 13, 15, .92); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--line); z-index: 10; }
+#bar .title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 0 4px; }
+#bar h1 { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#status { font-size: 12.5px; color: var(--faint); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chart3); flex: none; }
+.dot.live { background: var(--accent); } .dot.wait { background: var(--warning); } .dot.off { background: var(--negative); }
+.ib { height: 36px; min-width: 36px; padding: 0 9px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 14px; }
+.ib:hover { color: var(--text); background: var(--raised); }
+.ib.on { color: var(--ground); background: var(--text); }
+.ib svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#back { color: var(--text); font-weight: 500; padding-left: 4px; }
+#back svg { width: 18px; height: 18px; }
+
+/* The Mac's screen: noVNC draws into #stage, which is sized by the zoom; #view scrolls over it. */
+#view { position: fixed; left: 0; right: 0; top: var(--bar); bottom: 0; overflow: hidden; background: #000; touch-action: none; }
+#stage { position: relative; width: 100%; height: 100%; }
+#touch { position: absolute; inset: 0; z-index: 2; touch-action: none; }
+#cursor { position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; width: 22px; height: 22px; transform: translate(-3px, -2px); will-change: transform;
+  filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.6)); }
+#cursor svg { width: 100%; height: 100%; }
+#cursor.down svg path { fill: var(--accent); }
+body.keys #view { bottom: calc(var(--kbview, 0px) + 52px + env(safe-area-inset-bottom)); }
+body.kbup #keys { padding-bottom: 8px; }
+body.kbup.keys #view { bottom: calc(var(--kbview, 0px) + 52px); }
+
+/* Extra keys, shown with the keyboard */
+#keys { position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 10; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  padding: 8px max(8px, env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom)); background: rgba(12, 13, 15, .96); border-top: 1px solid var(--line); }
+#keys::-webkit-scrollbar { display: none; }
+#keys button { flex: none; min-width: 42px; height: 36px; padding: 0 10px; border-radius: 9px; background: var(--raised); font-size: 15px; font-weight: 500; }
+#keys button.on { background: var(--text); color: var(--ground); }
+#keys .sep { flex: none; width: 1px; background: var(--line); margin: 4px 2px; }
+#kbd { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; resize: none; z-index: -1; }
+
+/* Sheets: sign-in, menu, messages */
+.panel { position: fixed; z-index: 20; left: 50%; top: calc(var(--vvtop, 0px) + var(--vvh, 100%) / 2); transform: translate(-50%, -50%);
+  width: min(360px, calc(100% - 32px)); max-height: calc(var(--vvh, 100%) - 16px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.panel h2 { font-size: 18px; font-weight: 600; }
+.panel p { color: var(--muted); font-size: 14px; margin-top: 6px; text-wrap: pretty; }
+.panel label { display: block; font-size: 13px; color: var(--faint); margin: 14px 0 6px; }
+.panel input { width: 100%; height: 44px; border: 0; border-radius: 11px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px;
+  -webkit-user-select: text; user-select: text; }
+.panel input:focus { outline: 2px solid var(--chart3); }
+.panel .err { color: var(--negative); font-size: 14px; margin-top: 10px; }
+.panel .err:empty { display: none; }
+.actions { display: flex; gap: 10px; margin-top: 18px; }
+.btn { flex: 1; height: 44px; border-radius: 12px; background: var(--raised); font-weight: 600; }
+.btn.primary { background: var(--accent); color: #101400; }
+.btn:disabled { opacity: .5; cursor: default; }
+.fine { color: var(--faint) !important; font-size: 12.5px !important; margin-top: 12px !important; }
+#scrim { position: fixed; inset: 0; z-index: 15; background: rgba(0,0,0,.55); }
+
+#menu { position: fixed; z-index: 20; top: calc(var(--bar) + 6px); right: max(8px, env(safe-area-inset-right)); width: 250px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.55); }
+#menu button { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 12px; text-align: left; padding: 10px 12px; border-radius: 9px; font-size: 15px; }
+#menu button:hover { background: var(--raised); }
+#menu button span { color: var(--faint); font-size: 13px; }
+#menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 6px; }
+#menu .danger { color: var(--negative); }
+
+#toast { position: fixed; z-index: 12; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100% - 32px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 9px 16px; font-size: 14px; color: var(--muted); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; box-shadow: 0 8px 30px rgba(0,0,0,.5); transition: opacity .2s; }
+body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
+#toast.warn { color: var(--warning); }
+
+.spinner { width: 28px; height: 28px; border: 2.5px solid var(--raised); border-top-color: var(--text); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 14px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#wait { position: fixed; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--muted); font-size: 14px; }
+
+@media (max-width: 420px) { #bar .label { display: none; } }
+
+/* Sideways on a phone: the Mac's 16:9 screen takes the full height, and the controls move into a rail
+   on the right, in the space beside the picture rather than over it. */
+@media (orientation: landscape) and (max-height: 520px) {
+  :root { --rail: calc(56px + env(safe-area-inset-right)); --bar: 0px; }
+  #bar { inset: 0 0 0 auto; width: var(--rail); height: auto; flex-direction: column; justify-content: flex-start; gap: 6px;
+    padding: max(8px, env(safe-area-inset-top)) env(safe-area-inset-right) max(8px, env(safe-area-inset-bottom)) 0;
+    border-bottom: 0; border-left: 1px solid var(--line); }
+  #bar .title { flex: 0; order: 9; margin-top: auto; padding: 0; justify-content: center; }
+  #bar h1, #statusText, #bar .label { display: none; }
+  #status .dot { width: 9px; height: 9px; }
+  #view { top: 0; right: var(--rail); left: env(safe-area-inset-left); }
+  #keys { right: var(--rail); }
+  #menu { top: 8px; right: calc(var(--rail) + 8px); max-height: calc(100% - 16px); overflow-y: auto; }
+  #toast { left: calc(50% - var(--rail) / 2); }
+}
+
+/* The magnifier: while a finger steers the pointer, the area under it, enlarged. */
+#loupe { position: absolute; z-index: 4; width: 150px; height: 150px; border-radius: 50%; overflow: hidden; pointer-events: none;
+  border: 2px solid rgba(255,255,255,.85); box-shadow: 0 10px 30px rgba(0,0,0,.6); background: #000; opacity: 0; transition: opacity .12s; }
+#loupe.on { opacity: 1; }
+#loupe canvas { width: 100%; height: 100%; display: block; }
+#stats { position: absolute; z-index: 4; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 7px; background: rgba(0,0,0,.6);
+  color: var(--accent); font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+</style>
+</head>
+<body>
+<header id="bar">
+  <a class="ib" id="back" href="../" aria-label="Back to the dashboard"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></a>
+  <div class="title"><h1 id="name">Screen</h1><span id="status"><i class="dot wait" id="dot"></i><span id="statusText">Connecting…</span></span></div>
+  <button class="ib" id="modeBtn" aria-label="Pointer mode" title="Pointer mode"></button>
+  <button class="ib" id="kbdBtn" aria-label="Keyboard" title="Keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
+  <button class="ib" id="menuBtn" aria-label="More" title="More" aria-haspopup="menu"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+</header>
+
+<main id="view">
+  <div id="stage"></div>
+  <div id="touch" hidden></div>
+  <div id="loupe"><canvas width="300" height="300"></canvas></div>
+  <div id="stats" hidden></div>
+  <div id="cursor" hidden><svg viewBox="0 0 22 22"><path d="M3 2l0 16 4.3-4.1 2.9 6.6 2.8-1.2-2.9-6.5 6-.1z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg></div>
+</main>
+<div id="wait"><div class="spinner"></div><span id="waitText">Connecting to the Mac…</span></div>
+
+<nav id="keys" hidden aria-label="Extra keys">
+  <button data-k="Escape">esc</button><button data-k="Tab">tab</button>
+  <span class="sep"></span>
+  <button data-m="cmd" aria-label="Command">⌘</button><button data-m="opt" aria-label="Option">⌥</button>
+  <button data-m="ctrl" aria-label="Control">⌃</button><button data-m="shift" aria-label="Shift">⇧</button>
+  <span class="sep"></span>
+  <button data-k="Left" aria-label="Left arrow">←</button><button data-k="Up" aria-label="Up arrow">↑</button>
+  <button data-k="Down" aria-label="Down arrow">↓</button><button data-k="Right" aria-label="Right arrow">→</button>
+  <span class="sep"></span>
+  <button data-k="BackSpace" aria-label="Delete">⌫</button><button data-k="Return" aria-label="Return">⏎</button>
+</nav>
+<textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Type on the Mac"></textarea>
+
+<div id="scrim" hidden></div>
+<form class="panel" id="signin" hidden autocomplete="on">
+  <h2 id="signinTitle">Sign in to the Mac</h2>
+  <p id="signinNote">macOS asks for this Mac’s login, the same as Screen Sharing does. It goes straight to the Mac; Vitals never keeps it.</p>
+  <div id="userRow"><label for="user">User name</label><input id="user" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+  <input id="userHidden" name="username" autocomplete="username" tabindex="-1" aria-hidden="true"
+    style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
+  <label for="pass">Password</label><input id="pass" name="password" type="password" autocomplete="current-password">
+  <p class="err" id="signinErr"></p>
+  <div class="actions"><button type="button" class="btn" id="signinCancel">Cancel</button><button class="btn primary" id="signinGo">Connect</button></div>
+</form>
+
+<div class="panel" id="ended" hidden role="alertdialog" aria-labelledby="endedTitle">
+  <h2 id="endedTitle">Disconnected</h2>
+  <p id="endedNote"></p>
+  <div class="actions"><a class="btn" href="../" style="display:flex;align-items:center;justify-content:center;color:inherit;text-decoration:none">Dashboard</a>
+    <button class="btn primary" id="reconnect">Reconnect</button></div>
+</div>
+
+<div id="menu" hidden role="menu">
+  <button data-a="fit" role="menuitem">Fit to screen <span id="zoomNow">100%</span></button>
+  <button data-a="zoom2" role="menuitem">Zoom to 2×</button>
+  <button data-a="sharp" role="menuitem"><b id="sharpLabel" style="font-weight:400">Picture: faster</b> <span id="sharpNote">1x</span></button>
+  <hr>
+  <button data-a="spotlight" role="menuitem">Spotlight <span>⌘ Space</span></button>
+  <button data-a="switcher" role="menuitem">Switch app <span>⌘ Tab</span></button>
+  <button data-a="mission" role="menuitem">Mission Control <span>⌃ ↑</span></button>
+  <button data-a="copy" role="menuitem">Copy <span>⌘ C</span></button>
+  <button data-a="paste" role="menuitem">Paste <span>⌘ V</span></button>
+  <button data-a="quit" role="menuitem">Quit app <span>⌘ Q</span></button>
+  <hr>
+  <button data-a="type" role="menuitem">Type text from this phone…</button>
+  <button data-a="stats" role="menuitem">Show speed <span id="statsNote">off</span></button>
+  <button data-a="disconnect" class="danger" role="menuitem">Disconnect</button>
+</div>
+
+<form class="panel" id="typer" hidden>
+  <h2>Type on the Mac</h2>
+  <p>Paste or write text here; it is typed on the Mac, at the cursor, key by key.</p>
+  <label for="typeText">Text</label><input id="typeText" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+  <div class="actions"><button type="button" class="btn" id="typeCancel">Cancel</button><button class="btn primary">Type it</button></div>
+</form>
+
+<div id="toast" hidden role="status"></div>
+
+<script type="module">
+import { RFB, KeyTable, keysyms } from './novnc-1.7.0.js';
+
+const $ = id => document.getElementById(id);
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const touchDevice = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
+const IDLE = 600, WARN = 540;                 // seconds; the Mac ends the session at IDLE as well
+
+// ---------- state ----------
+const S = {
+  rfb: null, creds: null, connected: false, user: '', mac: 'Mac', wanted: true,
+  mode: touchDevice ? store.get('screenMode', 'trackpad') : 'direct',   // 'trackpad' | 'direct'
+  zoom: 1, cx: 0, cy: 0,                      // zoom over "fit", and the pointer in screen pixels
+  mods: new Set(), lastInput: Date.now(), lastAlive: 0, rtt: null, endedBy: '',
+  sharp: store.get('screenSharp', '0') === '1',   // full Retina picture rather than the lighter 1x one
+  stats: store.get('screenStats', '0') === '1',
+};
+$('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off';
+
+// ---------- speed: count what arrives on the socket noVNC opens ----------
+const meter = { bytes: 0, msgs: 0 };
+// A genuine WebSocket, as noVNC checks for one, with a listener added.
+window.WebSocket = new Proxy(window.WebSocket, {
+  construct(Native, args) {
+    const ws = new Native(...args);
+    ws.addEventListener('message', e => { meter.bytes += e.data.byteLength || e.data.size || 0; meter.msgs++; });
+    return ws;
+  },
+});
+let lastMeter = { t: performance.now(), bytes: 0 };
+setInterval(() => {
+  const now = performance.now(), dt = (now - lastMeter.t) / 1000, rate = (meter.bytes - lastMeter.bytes) / dt;
+  lastMeter = { t: now, bytes: meter.bytes };
+  if (!S.stats || !S.connected) return;
+  const c = canvas();
+  $('stats').textContent = `${rate > 1e6 ? (rate / 1e6).toFixed(1) + ' MB/s' : Math.round(rate / 1e3) + ' KB/s'}`
+    + (S.rtt != null ? ` · ${S.rtt} ms` : '') + (c ? ` · ${c.width}×${c.height}` : '');
+}, 1000);
+
+// ---------- connection ----------
+async function start() {
+  try {
+    const r = await fetch('info', { cache: 'no-store' });
+    if (r.ok) { const j = await r.json(); S.user = j.user || ''; S.mac = j.mac || 'Mac'; }
+  } catch {}
+  $('name').textContent = S.mac;
+  document.title = `${S.mac} · Screen`;
+  $('user').value = S.user;
+  connect();
+}
+
+async function connect() {
+  if (S.connecting) return;
+  S.connecting = true;
+  hide('ended'); setStatus('wait', 'Connecting…'); $('waitText').textContent = `Connecting to ${S.mac}…`; show('wait');
+  S.wanted = true;
+  // Before the picture starts: the Mac switches to (or back from) its lighter 1x mode, same layout.
+  try {
+    const r = await fetch('resolution', { method: 'POST', headers: { 'X-Vitals': '1' }, body: S.sharp ? 'full' : 'fast' });
+    S.fastMode = r.ok ? (await r.json()).fast : null;
+  } catch {}
+  const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + location.pathname.replace(/\/?$/, '/') + 'ws';
+  const rfb = S.rfb = new RFB($('stage'), url, { wsProtocols: ['binary'], shared: true, credentials: S.creds || undefined });
+  S.connecting = false;
+  rfb.scaleViewport = true;                   // fit, then our zoom resizes #stage
+  rfb.clipViewport = false;
+  rfb.resizeSession = false;
+  rfb.background = '#000';
+  rfb.focusOnClick = !touchDevice;
+  rfb.viewOnly = false;
+  rfb.addEventListener('connect', onConnect);
+  rfb.addEventListener('disconnect', onDisconnect);
+  rfb.addEventListener('credentialsrequired', e => askCredentials(e.detail.types));
+  rfb.addEventListener('securityfailure', () => { S.creds = null; S.endedBy = 'signin'; S.signinError = 'That didn’t work. Check the password and try again.'; });
+  rfb.addEventListener('desktopname', e => { if (e.detail.name) $('name').textContent = S.mac; });
+}
+
+function renderSharp() {
+  $('sharpLabel').textContent = S.sharp ? 'Picture: sharper' : 'Picture: faster';
+  $('sharpNote').textContent = S.sharp ? 'Retina' : (S.fastMode ? '1x' : '');
+}
+function onConnect() {
+  renderSharp();
+  S.connected = true; hide('wait'); hide('signin'); hide('scrim');
+  setStatus('live', 'Live');
+  const c = canvas();
+  if (c && !S.placed) { S.cx = c.width / 2; S.cy = c.height / 2; S.placed = true; }
+  else if (c && S.fbW && S.fbW !== c.width) { const k = c.width / S.fbW; S.cx *= k; S.cy *= k; }
+  if (c) S.fbW = c.width;
+  applyMode(); applyZoom(S.zoom, null);
+  S.lastInput = Date.now(); alive(true);
+  if (!touchDevice) S.rfb.focus();
+  // Upright on a phone, a 16:9 screen is small: say once that sideways is better.
+  else if (innerHeight > innerWidth && store.get('screenTipSideways', '') !== '1') {
+    store.set('screenTipSideways', '1');
+    setTimeout(() => toast('Tip: turn your phone sideways for a bigger screen', false, 4000), 900);
+  }
+}
+
+function onDisconnect(e) {
+  const was = S.connected;
+  S.connected = false; S.rfb = null; hide('wait'); hide('cursor'); hide('touch');
+  T.dragging = false; T.held = false;
+  const capture = document.getElementById('noVNC_mouse_capture_elem'); if (capture) capture.style.display = 'none';
+  if (S.switching) { S.switching = false; connect(); return; }
+  if (S.endedBy === 'signin') {               // wrong password: ask again rather than show an error page
+    S.endedBy = ''; askCredentials(S.lastTypes || ['password'], S.signinError); return;
+  }
+  if (!S.wanted) return;
+  setStatus('off', 'Disconnected');
+  const idle = (Date.now() - S.lastAlive) / 1000 >= IDLE - 5;
+  const why = idle ? 'Ended after 10 minutes without a tap or a key, so the Mac isn’t left open.'
+    : document.hidden || S.hiddenAt ? 'The connection paused while this page was in the background.'
+    : was ? 'The connection to the Mac dropped.' : 'Couldn’t reach Screen Sharing on the Mac. Check that it is on in System Settings › General › Sharing.';
+  $('endedTitle').textContent = idle ? 'Disconnected: idle' : 'Disconnected';
+  $('endedNote').textContent = why;
+  show('scrim'); show('ended');
+  // Back from the background with the password still in memory: pick up where it left off.
+  if ((document.hidden || S.hiddenAt) && S.creds) S.resumeOnShow = true;
+}
+
+function askCredentials(types, error = S.signinError || '') {
+  S.lastTypes = types;
+  hide('wait');
+  const needUser = types.includes('username');
+  $('userRow').hidden = !needUser;
+  $('user').name = needUser ? 'username' : ''; $('userHidden').name = needUser ? '' : 'username';
+  $('userHidden').value = S.user;
+  $('signinErr').textContent = error;
+  $('signinTitle').textContent = `Sign in to ${S.mac}`;
+  setStatus('wait', 'Sign in');
+  show('scrim'); show('signin');
+  setTimeout(() => (needUser && !$('user').value ? $('user') : $('pass')).focus(), 50);
+  if (!S.rfb) connect();                      // after a failure the socket is gone: open a fresh one first
+}
+
+$('signin').addEventListener('submit', e => {
+  e.preventDefault();
+  const creds = { password: $('pass').value };
+  if (!$('userRow').hidden) creds.username = $('user').value.trim();
+  if (!creds.password) return;
+  S.creds = creds;                            // kept in this page's memory only, to reconnect after a drop
+  S.signinError = '';
+  $('pass').value = '';
+  hide('signin'); hide('scrim'); show('wait'); $('waitText').textContent = 'Signing in…';
+  if (S.rfb) S.rfb.sendCredentials(creds); else connect();
+});
+$('signinCancel').addEventListener('click', () => { S.wanted = false; S.rfb?.disconnect(); location.href = '../'; });
+$('reconnect').addEventListener('click', () => connect());
+
+function disconnect() { S.wanted = false; S.creds = null; S.rfb?.disconnect(); setStatus('off', 'Disconnected'); location.href = '../'; }
+
+// A locked phone freezes the socket, and iOS often reports it closed only once the page is back: after
+// more than a few seconds away, start a fresh connection (the password is still in memory).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { S.hiddenAt = Date.now(); return; }
+  const away = S.hiddenAt && Date.now() - S.hiddenAt > 3000;
+  S.hiddenAt = 0;
+  if (S.connected && away && S.creds) { S.switching = true; S.rfb?.disconnect(); }
+  else if (!S.connected && (S.resumeOnShow || away) && S.creds) { S.resumeOnShow = false; hide('ended'); hide('scrim'); connect(); }
+});
+window.addEventListener('pagehide', () => { S.wanted = false; S.rfb?.disconnect(); });
+// Back here with the browser's back button: the page comes back as it was, minus its connection.
+window.addEventListener('pageshow', e => { if (e.persisted && !S.connected) connect(); });
+
+// ---------- status, toasts, idle ----------
+function setStatus(kind, text) {
+  $('dot').className = 'dot ' + kind;
+  $('statusText').textContent = text + (kind === 'live' && S.rtt != null ? ` · ${S.rtt} ms` : '');
+}
+let toastTimer = 0;
+function toast(text, warn = false, ms = 2200) {
+  const t = $('toast'); t.textContent = text; t.classList.toggle('warn', warn); show('toast');
+  clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => hide('toast'), ms);
+}
+function show(id) { $(id).hidden = false; }
+function hide(id) { $(id).hidden = true; }
+
+/** A touch or a key: tell the Mac at most every 30 s, so it ends the session only when nobody is using it. */
+function touched() {
+  S.lastInput = Date.now();
+  if (S.warned) { S.warned = false; hide('toast'); }
+  alive(false);
+}
+async function alive(force) {
+  if (!force && Date.now() - S.lastAlive < 30000) return;
+  const sent = Date.now();
+  S.lastAlive = sent;
+  const t0 = performance.now();
+  try {
+    const r = await fetch('alive', { method: 'POST', headers: { 'X-Vitals': '1' } });
+    if (!r.ok) S.lastAlive = 0;
+    if (r.ok) { S.rtt = Math.round(performance.now() - t0); if (S.connected) setStatus('live', 'Live'); }
+  } catch {}
+}
+setInterval(() => {
+  if (!S.connected) return;
+  const idle = (Date.now() - S.lastAlive) / 1000;      // as the Mac counts it: since the last report it got
+  if (idle >= WARN && !S.warned) { S.warned = true; toast('Disconnecting in 1 minute: tap to stay', true, 0); }
+}, 5000);
+
+// ---------- pointer: trackpad (move a cursor, tap to click) or direct (tap where you touch) ----------
+const canvas = () => $('stage').querySelector('canvas');
+
+/** Screen pixels to page coordinates, through noVNC's own scaling. */
+function toClient(x, y) {
+  const c = canvas(), r = c.getBoundingClientRect();
+  return { x: r.left + x * r.width / c.width, y: r.top + y * r.height / c.height };
+}
+function mouse(type, button = 0, buttons = 0) {
+  const c = canvas(); if (!c) return;
+  const p = toClient(S.cx, S.cy);
+  c.dispatchEvent(new MouseEvent(type, { clientX: p.x, clientY: p.y, button, buttons, bubbles: true, cancelable: true }));
+}
+function wheel(dx, dy) {
+  const c = canvas(); if (!c) return;
+  const p = toClient(S.cx, S.cy);
+  c.dispatchEvent(new WheelEvent('wheel', { clientX: p.x, clientY: p.y, deltaX: dx, deltaY: dy, deltaMode: 0, bubbles: true, cancelable: true }));
+}
+function click(button = 0) {
+  const mask = button === 2 ? 2 : 1;
+  mouse('mousemove'); mouse('mousedown', button, mask); mouse('mouseup', button, 0);
+}
+
+function drawCursor() {
+  const c = canvas(); if (!c) return;
+  const v = $('view').getBoundingClientRect(), p = toClient(S.cx, S.cy);
+  $('cursor').style.transform = `translate(${p.x - v.left - 3}px, ${p.y - v.top - 2}px)`;
+}
+
+/** Keep the pointer in view when zoomed in, a little before it reaches the edge. */
+function follow() {
+  if (S.zoom <= 1) return;
+  const view = $('view'), p = toClient(S.cx, S.cy), v = view.getBoundingClientRect();
+  const m = Math.min(80, v.width * .18);
+  let dx = 0, dy = 0;
+  if (p.x < v.left + m) dx = p.x - (v.left + m); else if (p.x > v.right - m) dx = p.x - (v.right - m);
+  if (p.y < v.top + m) dy = p.y - (v.top + m); else if (p.y > v.bottom - m) dy = p.y - (v.bottom - m);
+  if (dx || dy) { view.scrollLeft += dx; view.scrollTop += dy; }
+}
+
+function applyMode() {
+  const trackpad = S.mode === 'trackpad';
+  // Touch mode hands every finger to the Mac, so there would be no way to pan: it stays at fit.
+  for (const a of ['fit', 'zoom2']) $('menu').querySelector(`[data-a=${a}]`).hidden = !trackpad && touchDevice;
+  if (!trackpad && touchDevice && S.zoom !== 1) applyZoom(1, null);
+  $('touch').hidden = !trackpad; $('cursor').hidden = !trackpad || !S.connected;
+  $('modeBtn').innerHTML = trackpad
+    ? '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M4 14h16"/></svg><span class="label">Trackpad</span>'
+    : '<svg viewBox="0 0 24 24"><path d="M9 11V5.5a1.5 1.5 0 013 0V11m0-1.5a1.5 1.5 0 013 0V11m0-.5a1.5 1.5 0 013 0V15a6 6 0 01-6 6h-1a6 6 0 01-5-2.7L4.3 15a1.5 1.5 0 012.4-1.8L9 15"/></svg><span class="label">Touch</span>';
+  $('modeBtn').title = trackpad ? 'Trackpad: move the pointer, tap to click' : 'Touch: tap where you want to click';
+  if (trackpad) drawCursor();
+}
+$('modeBtn').addEventListener('click', () => {
+  S.mode = S.mode === 'trackpad' ? 'direct' : 'trackpad'; store.set('screenMode', S.mode); applyMode();
+  toast(S.mode === 'trackpad' ? 'Slide to move · tap to click · hold to drag · two fingers to scroll or zoom' : 'Touch: tap where you want to click', false, 3500);
+});
+if (!touchDevice) $('modeBtn').hidden = true;
+
+/** Zoom over "fit to screen", keeping the point at (ax, ay) on the page where it is. */
+function applyZoom(z, anchor) {
+  const view = $('view'), stage = $('stage');
+  z = Math.min(6, Math.max(1, z));
+  const old = S.zoom, r = view.getBoundingClientRect();
+  const ax = anchor ? anchor.x - r.left : r.width / 2, ay = anchor ? anchor.y - r.top : r.height / 2;
+  const fx = (view.scrollLeft + ax) / old, fy = (view.scrollTop + ay) / old;
+  S.zoom = z;
+  stage.style.width = r.width * z + 'px'; stage.style.height = r.height * z + 'px';
+  view.scrollLeft = fx * z - ax; view.scrollTop = fy * z - ay;
+  $('zoomNow').textContent = Math.round(z * 100) + '%';
+  requestAnimationFrame(() => { if (S.mode === 'trackpad') drawCursor(); });
+}
+new ResizeObserver(() => applyZoom(S.zoom, null)).observe($('view'));
+
+// Trackpad gestures, all on the overlay so noVNC's own touch handling never sees them:
+//   slide = move the pointer · tap = click · double tap = double click · two-finger tap = right click
+//   hold still, then slide = drag · hold still and let go = right click · two fingers = scroll · pinch = zoom
+// Taps click at once (no waiting to see what comes next); a hold is what turns a touch into a drag.
+const HOLD = 380;
+const T = { pts: new Map(), start: 0, moved: 0, mode: '', held: false, holdTimer: 0, dragging: false, pinch: null, raf: 0 };
+const el = $('touch');
+el.addEventListener('pointerdown', e => {
+  e.preventDefault(); el.setPointerCapture(e.pointerId); touched();
+  T.pts.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.timeStamp });
+  if (T.pts.size === 1) {
+    T.start = performance.now(); T.moved = 0; T.mode = 'move'; T.held = false;
+    clearTimeout(T.holdTimer);
+    T.holdTimer = setTimeout(() => {         // still and down: ready to drag (or a right click on release)
+      if (T.mode === 'move' && T.moved < 8) { T.held = true; $('cursor').classList.add('down'); }
+    }, HOLD);
+  } else if (T.pts.size === 2) {
+    clearTimeout(T.holdTimer); T.held = false; $('cursor').classList.remove('down');
+    if (T.dragging) endDrag();
+    const [a, b] = [...T.pts.values()], view = $('view'), r = view.getBoundingClientRect();
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    T.mode = 'two'; T.twoStart = performance.now();
+    // The picture point under the fingers when the pinch began: it stays under them as they move.
+    T.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: S.zoom, mx, my, lx: mx, ly: my, ax: 0, ay: 0, kind: '',
+                fx: (view.scrollLeft + mx - r.left) / S.zoom, fy: (view.scrollTop + my - r.top) / S.zoom };
+  }
+});
+el.addEventListener('pointermove', e => {
+  const p = T.pts.get(e.pointerId); if (!p) return;
+  e.preventDefault();
+  const dx = e.clientX - p.x, dy = e.clientY - p.y, dt = Math.max(1, e.timeStamp - p.t);
+  p.x = e.clientX; p.y = e.clientY; p.t = e.timeStamp;
+  if (T.mode === 'move') {
+    T.moved += Math.hypot(dx, dy);
+    if (T.held && !T.dragging && T.moved > 4) { T.dragging = true; mouse('mousemove'); mouse('mousedown', 0, 1); }
+    // Speed with a little acceleration: slow for precision, quick flicks cross the screen.
+    const c = canvas(); if (!c) return;
+    // Speed in points per 60 Hz frame, so 120 Hz screens (twice the events, half the step) feel the same.
+    const v = Math.hypot(dx, dy) * 16.7 / dt, gain = (c.width / $('view').clientWidth / S.zoom) * (0.55 + Math.min(1.6, v / 14));
+    S.cx = Math.min(c.width - 1, Math.max(0, S.cx + dx * gain));
+    S.cy = Math.min(c.height - 1, Math.max(0, S.cy + dy * gain));
+    if (!T.raf) T.raf = requestAnimationFrame(() => { T.raf = 0; mouse('mousemove', 0, T.dragging ? 1 : 0); follow(); drawCursor(); loupe(true); });
+  } else if (T.mode === 'two' && T.pts.size === 2) {
+    const [a, b] = [...T.pts.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const P = T.pinch;
+    if (!P.kind) {                             // decide once per gesture: pinch, or a two-finger scroll
+      const spread = Math.abs(d - P.d), travel = Math.hypot(mx - P.mx, my - P.my);
+      if (spread > 18 && spread > travel) P.kind = 'pinch'; else if (travel > 10) P.kind = 'scroll';
+    }
+    if (P.kind === 'pinch') {                  // zoom about the start point, and pan with the fingers
+      const view = $('view'), r = view.getBoundingClientRect(), z = Math.min(6, Math.max(1, P.z * d / P.d));
+      applyZoom(z, null);
+      view.scrollLeft = P.fx * z - (mx - r.left); view.scrollTop = P.fy * z - (my - r.top);
+      if (S.mode === 'trackpad') drawCursor();
+    } else if (P.kind === 'scroll') {
+      // The midpoint's travel, in steps of one wheel notch; natural scrolling, like a trackpad.
+      P.ax += -(mx - P.lx) * 2.2; P.ay += -(my - P.ly) * 2.2;
+      while (Math.abs(P.ay) >= 50) { wheel(0, Math.sign(P.ay) * 50); P.ay -= Math.sign(P.ay) * 50; }
+      while (Math.abs(P.ax) >= 50) { wheel(Math.sign(P.ax) * 50, 0); P.ax -= Math.sign(P.ax) * 50; }
+    }
+    P.lx = mx; P.ly = my;
+  }
+});
+function up(e) {
+  const p = T.pts.get(e.pointerId); if (!p) return;
+  T.pts.delete(e.pointerId);
+  if (!T.pts.size) loupe(false);
+  const now = performance.now();
+  if (T.mode === 'move' && T.pts.size === 0) {
+    clearTimeout(T.holdTimer);
+    if (T.dragging) endDrag();
+    else if (T.held && T.moved < 10) { click(2); $('cursor').classList.remove('down'); }   // a long press: right click
+    else if (T.moved < 10 && now - T.start < HOLD) {
+      click(0);
+      $('cursor').classList.add('down'); setTimeout(() => $('cursor').classList.remove('down'), 120);
+    }
+    T.held = false;
+  } else if (T.mode === 'two' && T.pts.size === 0) {
+    if (!T.pinch?.kind && now - T.twoStart < 300) click(2);    // two-finger tap: right click
+    T.mode = '';
+  } else if (T.pts.size === 0) T.mode = '';
+}
+/** The magnifier: only when the picture is small on screen (zoomed out), placed away from the pointer. */
+function loupe(on) {
+  const L = $('loupe'), c = canvas();
+  const small = c && c.getBoundingClientRect().width / c.width < 0.6;
+  if (!on || !small) { L.classList.remove('on'); return; }
+  const k = L.firstElementChild, g = k.getContext('2d'), span = 150;     // screen pixels shown across
+  g.imageSmoothingEnabled = true;
+  g.fillStyle = '#000'; g.fillRect(0, 0, k.width, k.height);
+  g.drawImage(c, S.cx - span / 2, S.cy - span / 2, span, span, 0, 0, k.width, k.height);
+  g.strokeStyle = 'rgba(198,242,78,.9)'; g.lineWidth = 2;                // where the click will land
+  g.beginPath(); g.moveTo(k.width / 2 - 10, k.height / 2); g.lineTo(k.width / 2 + 10, k.height / 2);
+  g.moveTo(k.width / 2, k.height / 2 - 10); g.lineTo(k.width / 2, k.height / 2 + 10); g.stroke();
+  const v = $('view').getBoundingClientRect(), p = toClient(S.cx, S.cy);
+  const left = p.x - v.left < v.width / 2 ? v.width - 162 : 12;
+  const top = p.y - v.top < 180 ? Math.min(v.height - 162, p.y - v.top + 40) : Math.max(12, p.y - v.top - 190);
+  L.style.left = left + 'px'; L.style.top = top + 'px';
+  L.classList.add('on');
+}
+function endDrag() { T.dragging = false; mouse('mouseup', 0, 0); $('cursor').classList.remove('down'); }
+el.addEventListener('pointerup', up);
+// iOS cancels touches when a system gesture takes over (home bar, Control Center, a banner): never a click.
+el.addEventListener('pointercancel', e => {
+  T.pts.delete(e.pointerId);
+  clearTimeout(T.holdTimer);
+  if (T.dragging) endDrag();
+  T.held = false; $('cursor').classList.remove('down'); loupe(false);
+  if (!T.pts.size) T.mode = '';
+});
+
+// Direct mode and the desktop: noVNC handles the pointer itself; count it as activity.
+$('stage').addEventListener('pointerdown', touched, true);
+$('stage').addEventListener('pointermove', touched, { capture: true, passive: true });
+$('stage').addEventListener('wheel', touched, { capture: true, passive: true });
+document.addEventListener('keydown', e => { if (!touchDevice) touched(); }, true);
+
+// ---------- keyboard ----------
+const MOD = { cmd: KeyTable.XK_Super_L, opt: KeyTable.XK_Alt_L, ctrl: KeyTable.XK_Control_L, shift: KeyTable.XK_Shift_L };
+const NAMED = { Escape: KeyTable.XK_Escape, Tab: KeyTable.XK_Tab, Left: KeyTable.XK_Left, Up: KeyTable.XK_Up, Down: KeyTable.XK_Down,
+                Right: KeyTable.XK_Right, BackSpace: KeyTable.XK_BackSpace, Return: KeyTable.XK_Return, space: KeyTable.XK_space };
+
+/** One key, with the sticky modifiers (and any extra ones) held around it; sticky ones then let go. */
+function press(keysym, extra = []) {
+  if (!S.rfb || !S.connected) return;
+  const mods = [...new Set([...[...S.mods].map(m => MOD[m]), ...extra])];
+  for (const m of mods) S.rfb.sendKey(m, null, true);
+  S.rfb.sendKey(keysym, null, true); S.rfb.sendKey(keysym, null, false);
+  for (const m of mods.reverse()) S.rfb.sendKey(m, null, false);
+  if (S.mods.size) { S.mods.clear(); renderMods(); }
+  touched();
+}
+const PLAIN = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...', '\u00a0': ' ' };
+const SHIFTED = '~!@#$%^&*()_+{}|:"<>?';
+function typeText(text) {
+  for (const ch of [...text].map(c => PLAIN[c] ?? c).join('')) {
+    if (ch === '\n') press(KeyTable.XK_Return);
+    else if (ch === '\t') press(KeyTable.XK_Tab);
+    // As a keyboard would send them: Shift held for capitals and the shifted symbols.
+    else press(keysyms.lookup(ch.codePointAt(0)), /[A-Z]/.test(ch) || SHIFTED.includes(ch) ? [KeyTable.XK_Shift_L] : []);
+  }
+}
+function renderMods() { for (const b of $('keys').querySelectorAll('[data-m]')) b.classList.toggle('on', S.mods.has(b.dataset.m)); }
+
+function keyboard(on) {
+  document.body.classList.toggle('keys', on); $('keys').hidden = !on; $('kbdBtn').classList.toggle('on', on);
+  if (on) { if (touchDevice) $('kbd').focus({ preventScroll: true }); else S.rfb?.focus(); }
+  else $('kbd').blur();
+  requestAnimationFrame(() => applyZoom(S.zoom, null));
+}
+$('kbdBtn').addEventListener('click', () => keyboard($('keys').hidden));
+$('keys').addEventListener('pointerdown', e => e.preventDefault());     // keep the on-screen keyboard up
+$('keys').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.m) { S.mods.has(b.dataset.m) ? S.mods.delete(b.dataset.m) : S.mods.add(b.dataset.m); renderMods(); return; }
+  press(NAMED[b.dataset.k]);
+});
+// The phone's keyboard types into a hidden text box; each character goes to the Mac as a key. The box
+// always holds one placeholder character, since iOS reports no Backspace in an empty field.
+const PAD = '__________', kbdBox = $('kbd');
+function resetKbd() { kbdBox.value = PAD; try { kbdBox.setSelectionRange(PAD.length, PAD.length); } catch {} }
+resetKbd();
+kbdBox.addEventListener('focus', resetKbd);
+let pendingKey = null;
+$('kbd').addEventListener('beforeinput', e => {
+  e.preventDefault();
+  pendingKey = null;                          // the keyboard reported it here: the keydown needn't
+  const t = e.inputType;
+  if (t === 'insertText' || t === 'insertReplacementText' || t === 'insertFromPaste') {
+    typeText(e.data ?? e.dataTransfer?.getData('text/plain') ?? '');
+  } else if (t === 'deleteContentBackward' || t === 'deleteWordBackward') press(KeyTable.XK_BackSpace, t === 'deleteWordBackward' ? [KeyTable.XK_Alt_L] : []);
+  else if (t === 'deleteContentForward') press(KeyTable.XK_Delete);
+  else if (t === 'insertLineBreak' || t === 'insertParagraph') press(KeyTable.XK_Return);
+});
+// A hardware keyboard on an iPad, or keys the box doesn't turn into input.
+$('kbd').addEventListener('keydown', e => {
+  const map = { ArrowLeft: 'Left', ArrowRight: 'Right', ArrowUp: 'Up', ArrowDown: 'Down', Escape: 'Escape', Tab: 'Tab' };
+  if (map[e.key]) { e.preventDefault(); press(NAMED[map[e.key]]); }
+  // Backspace and Return usually arrive as beforeinput too; send them from here only if they don't.
+  else if ((e.key === 'Backspace' || e.key === 'Enter') && !e.isComposing) {
+    const key = pendingKey = e.key;
+    setTimeout(() => { if (pendingKey === key) { pendingKey = null; press(key === 'Enter' ? KeyTable.XK_Return : KeyTable.XK_BackSpace); } }, 0);
+  }
+  else if (e.metaKey && e.key.length === 1) { e.preventDefault(); press(keysyms.lookup(e.key.codePointAt(0)), [KeyTable.XK_Super_L]); }
+});
+// The fallback: anything the box still took in (some keyboards don't send beforeinput) is typed, then reset.
+$('kbd').addEventListener('input', () => {
+  const v = kbdBox.value;
+  if (v === PAD) return;
+  if (v.length < PAD.length) press(KeyTable.XK_BackSpace); else typeText(v.startsWith(PAD) ? v.slice(PAD.length) : v);
+  resetKbd();
+});
+// On a phone the on-screen keyboard covers the page rather than shrinking it: lift the key row above it.
+if (window.visualViewport) {
+  const vv = visualViewport, lift = () => {
+    const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop), root = document.documentElement.style;
+    root.setProperty('--kb', kb + 'px');
+    root.setProperty('--vvtop', vv.offsetTop + 'px'); root.setProperty('--vvh', vv.height + 'px');
+    // Sideways, a keyboard would leave a sliver of picture: it covers the picture instead.
+    root.setProperty('--kbview', innerWidth > innerHeight ? '0px' : kb + 'px');
+    if (vv.offsetTop > 0 && document.activeElement === $('kbd')) scrollTo(0, 0);
+    document.body.classList.toggle('kbup', kb > 40);
+    requestAnimationFrame(() => applyZoom(S.zoom, null));
+  };
+  vv.addEventListener('resize', lift); vv.addEventListener('scroll', lift);
+}
+$('kbd').addEventListener('blur', () => { if (!$('keys').hidden && touchDevice) setTimeout(() => { if (document.activeElement !== $('kbd')) keyboard(false); }, 150); });
+
+// ---------- menu ----------
+function menu(open) { $('menu').hidden = !open; $('menuBtn').classList.toggle('on', open); }
+$('menuBtn').addEventListener('click', e => { e.stopPropagation(); menu($('menu').hidden); });
+document.addEventListener('pointerdown', e => { if (!$('menu').hidden && !e.target.closest('#menu, #menuBtn')) menu(false); });
+const K = KeyTable;
+$('menu').addEventListener('click', e => {
+  const a = e.target.closest('button')?.dataset.a; if (!a) return;
+  menu(false);
+  const cmd = k => press(k, [K.XK_Super_L]);
+  switch (a) {
+    case 'fit': applyZoom(1, null); break;
+    case 'zoom2': applyZoom(2, S.mode === 'trackpad' ? toClient(S.cx, S.cy) : null); break;
+    case 'sharp':
+      S.sharp = !S.sharp; store.set('screenSharp', S.sharp ? '1' : '0'); renderSharp();
+      toast(S.sharp ? 'Sharper: the full Retina picture, slower to update' : 'Faster: a lighter picture, same layout on the Mac');
+      if (S.rfb) { S.switching = true; S.rfb.disconnect(); }   // reconnects with the other mode (onDisconnect)
+      break;
+    case 'spotlight': cmd(K.XK_space); break;
+    case 'switcher': cmd(K.XK_Tab); break;
+    case 'mission': press(K.XK_Up, [K.XK_Control_L]); break;
+    case 'copy': cmd(keysyms.lookup(99)); break;
+    case 'paste': cmd(keysyms.lookup(118)); break;
+    case 'quit': cmd(keysyms.lookup(113)); break;
+    case 'stats': S.stats = !S.stats; store.set('screenStats', S.stats ? '1' : '0'); $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off'; break;
+    case 'type': show('scrim'); show('typer'); $('typeText').focus(); break;
+    case 'disconnect': disconnect(); break;
+  }
+});
+$('typer').addEventListener('submit', e => { e.preventDefault(); typeText($('typeText').value); $('typeText').value = ''; hide('typer'); hide('scrim'); });
+$('typeCancel').addEventListener('click', () => { hide('typer'); hide('scrim'); });
+
+// Desktop: ctrl/⌘ + wheel or the keys + and - zoom too, without reaching the Mac.
+$('view').addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault(); e.stopPropagation();
+  applyZoom(S.zoom * Math.exp(-e.deltaY / 200), { x: e.clientX, y: e.clientY });
+}, { capture: true, passive: false });
+
+start();
+</script>
+</body>
+</html>

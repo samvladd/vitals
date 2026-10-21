@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SystemConfiguration
 import launch
 
 // `serve`: the phone dashboard. launchd owns the listening socket on 127.0.0.1 and starts this only
@@ -40,6 +41,8 @@ func serve() -> Never {
     let port = option("--port").flatMap(UInt16.init) ?? 8787
     guard let fd = launchdSocket() ?? bindLocal(port) else { fail("cannot listen on 127.0.0.1:\(port)") }
     let peer = option("--peer").map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+    if let p = option("--screen-port").flatMap(UInt16.init) { Screen.port = p }     // for tests; always 127.0.0.1
+    if let s = option("--screen-idle").flatMap(Double.init), s >= 5 { Screen.idleLimit = s }
     let origins = Set((option("--allow-origin") ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " /")) })
     server = WebServer(listener: fd, peer: peer, origins: origins)
     server?.start()
@@ -125,6 +128,8 @@ final class Conn {
     var buf = Data()
     var streaming = false
     var origin: String?
+    var parsed = false                  // its request has fully arrived
+    let born = Date()
     private let source: DispatchSourceRead
 
     init(_ fd: Int32, onRead: @escaping (Conn, Data?) -> Void) {
@@ -211,7 +216,7 @@ final class WebServer {
         guard let d else { return drop(c) }          // closed by the other end
         if c.streaming { return }
         c.buf.append(d)
-        if let r = Request(c.buf) { c.buf = Data(); route(r, c) }
+        if let r = Request(c.buf) { c.buf = Data(); c.parsed = true; route(r, c) }
         else if c.buf.count > 65536 { drop(c) }
     }
 
@@ -232,10 +237,11 @@ final class WebServer {
         return "Access-Control-Allow-Origin: \(o)\r\nVary: Origin\r\n"
     }
 
-    private func send(_ c: Conn, _ status: Int, _ type: String, _ body: Data, cache: String = "no-store") {
-        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict"][status] ?? ""
+    private func send(_ c: Conn, _ status: Int, _ type: String, _ body: Data, cache: String = "no-store", extra: String = "") {
+        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict",
+                      503: "Service Unavailable"][status] ?? ""
         let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
-            + "Cache-Control: \(cache)\r\n\(cors(c))Connection: close\r\n\r\n"
+            + "Cache-Control: \(cache)\r\n\(cors(c))\(extra)Connection: close\r\n\r\n"
         c.write(Data(head.utf8) + body)
         drop(c)
     }
@@ -271,6 +277,9 @@ final class WebServer {
         case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
+        case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
+             ("POST", "/screen/resolution"):
+            screen(r, c)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
         }
@@ -310,7 +319,10 @@ final class WebServer {
 
     private func housekeeping() {
         let now = Date()
-        if !watchers.isEmpty || SpaceScanner.shared.busy { lastBusy = now }
+        if !watchers.isEmpty || SpaceScanner.shared.busy || !Screen.relays.isEmpty { lastBusy = now }
+        Screen.housekeeping()
+        // A request still not complete after 10 s is someone holding a connection open: let it go.
+        for c in conns.values where !c.parsed && !c.streaming && now.timeIntervalSince(c.born) > 10 { drop(c) }
         if driver.policy != "auto",
            now.timeIntervalSince(lastAlive) > Self.lease || emptySince.map({ now.timeIntervalSince($0) > Self.grace }) == true {
             driver.set("auto")
@@ -363,8 +375,8 @@ final class WebServer {
         }
         switch r.path {
         case "/apps":
-            struct Reply: Encodable { var device: String, apps: [AppRow], recent: [Control.Entry] }
-            send(c, 200, json: json(Reply(device: device, apps: meter.list(), recent: Control.recent(5))))
+            struct Reply: Encodable { var device: String, apps: [AppRow], recent: [Control.Entry], screen: Bool }
+            send(c, 200, json: json(Reply(device: device, apps: meter.list(), recent: Control.recent(5), screen: Control.load()?.screen == true)))
         case "/apps/installed": send(c, 200, json: json(Control.installed()))
         case "/apps/icon":
             guard let png = Control.icon(id: r.query["id"] ?? "") else { return send(c, 404, "text/plain", Data()) }
@@ -386,4 +398,92 @@ final class WebServer {
             }
         }
     }
+
+    // MARK: screen (Screen.swift)
+
+    /// The viewer's file name carries its version, so a phone can keep it for good.
+    static let novnc = "novnc-1.7.0.js"
+
+    private func screen(_ r: Request, _ c: Conn) {
+        c.origin = nil
+        let ws = r.path == "/screen/ws"
+        let device: String
+        switch Control.gate(r, change: ws || r.method == "POST") {
+        case .off: return send(c, 404, "text/plain", Data("not found".utf8))
+        case .refused(let why):
+            let from = r.headers["x-forwarded-for"] ?? "this Mac", key = from + why
+            if refusals[key].map({ Date().timeIntervalSince($0) > 600 }) ?? true {
+                refusals[key] = Date()
+                Control.record("Blocked a screen request from \(from) (\(r.headers["tailscale-user-login"] ?? "no account")): \(why)", "refused")
+            }
+            return send(c, 403, "text/plain", Data("This device isn't allowed to see this Mac's screen.".utf8))
+        case .allowed(let d): device = d
+        }
+        guard Control.load()?.screen == true else { return send(c, 404, "text/plain", Data("not found".utf8)) }
+        switch r.path {
+        case "/screen":                     // the page's relative links need the trailing slash
+            c.write(Data("HTTP/1.1 308 Permanent Redirect\r\nLocation: /screen/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8))
+            drop(c)
+        case "/screen/": send(c, 200, "text/html; charset=utf-8", WebAssets.screen, cache: "no-cache", extra: "X-Frame-Options: DENY\r\n")
+        case "/screen/info":
+            // The login name to suggest (the Mac's signed-in user) and what to call this Mac.
+            let model = (try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)))?.model.components(separatedBy: " (").first
+            send(c, 200, json: json(["user": consoleUser() ?? NSUserName(), "mac": model ?? "Mac"]))
+        case "/screen/alive": Screen.touched(by: device); send(c, 204, "text/plain", Data())
+        case "/screen/resolution":
+            // "fast" before connecting (or reconnecting) for the lighter 1x picture; "full" for Retina.
+            let fast = r.body.trimmingCharacters(in: .whitespacesAndNewlines) == "fast"
+            let mode = fast ? Display.fast() : { Display.restore(); return nil }()
+            send(c, 200, json: json(["fast": mode]))
+        case "/screen/ws": upgrade(r, c, device: device)
+        default:
+            // Sent compressed when the browser takes it (all do): 57 KB rather than 189 KB on a phone.
+            let gz = (r.headers["accept-encoding"] ?? "").contains("gzip")
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/javascript\r\nContent-Length: \((gz ? WebAssets.novncGz : WebAssets.novnc).count)\r\n"
+                + (gz ? "Content-Encoding: gzip\r\n" : "") + "Cache-Control: private, max-age=31536000, immutable\r\nConnection: close\r\n\r\n"
+            c.write(Data(head.utf8) + (gz ? WebAssets.novncGz : WebAssets.novnc))
+            drop(c)
+        }
+    }
+
+    private func upgrade(_ r: Request, _ c: Conn, device: String) {
+        guard r.headers["upgrade"]?.lowercased() == "websocket", r.headers["sec-websocket-version"] == "13",
+              let key = r.headers["sec-websocket-key"], !key.isEmpty else { return send(c, 400, "text/plain", Data("WebSocket only".utf8)) }
+        guard Screen.relays.count < Screen.maxSessions else {
+            return send(c, 503, "text/plain", Data("This Mac's screen is already open in \(Screen.maxSessions) places.".utf8))
+        }
+        guard let vnc = Screen.connectLocal(Screen.port) else {
+            return send(c, 503, "text/plain", Data("Screen Sharing is off on this Mac.".utf8))
+        }
+        // noVNC asks for the "binary" subprotocol; a browser drops the socket unless it is echoed.
+        let wantsBinary = (r.headers["sec-websocket-protocol"] ?? "").split(separator: ",").contains { $0.trimmingCharacters(in: .whitespaces) == "binary" }
+        let head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            + "Sec-WebSocket-Accept: \(Screen.accept(key))\r\n" + (wantsBinary ? "Sec-WebSocket-Protocol: binary\r\n" : "") + "\r\n"
+        guard c.write(Data(head.utf8)) else { close(vnc); return drop(c) }
+        // The relay takes its own copy of the socket; dropping the connection here closes only ours.
+        let fd = dup(c.fd)
+        drop(c)
+        Control.record("Screen opened from \(device)")
+        let relay = ScreenRelay(client: fd, vnc: vnc, device: device) { relay, why, seconds in
+            Screen.remove(relay)
+            Control.record("Screen closed from \(relay.device) after \(F.duration(seconds)): \(why)")
+        }
+        Screen.add(relay)
+        relay.start()
+    }
+}
+
+/// "45 s", "3 min", "1 h 5 min".
+enum F {
+    static func duration(_ s: TimeInterval) -> String {
+        let m = Int(s / 60)
+        return s < 60 ? "\(Int(s)) s" : m < 60 ? "\(m) min" : "\(m / 60) h \(m % 60) min"
+    }
+}
+
+/// The short name of whoever is signed in at the Mac's screen, which is who Screen Sharing will show.
+func consoleUser() -> String? {
+    var uid: uid_t = 0
+    guard let name = SCDynamicStoreCopyConsoleUser(nil, &uid, nil) as String?, name != "loginwindow" else { return nil }
+    return name
 }
