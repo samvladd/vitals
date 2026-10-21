@@ -21,6 +21,7 @@
   --text: #fff; --muted: #b4b4b4; --faint: #8f9296;
   --accent: #c6f24e; --warning: #e5a93b; --negative: #e5566f;
   --chart2: #e6e6e6; --chart3: #6b6b6b; --chart4: #34383e;
+  --gap: 12px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: var(--ground); -webkit-text-size-adjust: 100%; }
@@ -28,56 +29,66 @@ body {
   background: var(--ground); color: var(--text);
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
-  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
-  touch-action: manipulation; overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation; overscroll-behavior-y: none;
   padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   max-width: 560px; margin: 0 auto;
 }
-button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-.top { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; -webkit-user-select: none; user-select: none; }
+button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+/* Header: brand and status; the host switcher drops to its own row on a phone. */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 16px; }
+.brand, #stamp { height: 56px; display: flex; align-items: center; }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 17px; }
 .brand img { width: 26px; height: 26px; border-radius: 7px; }
 #stamp { color: var(--faint); font-size: 13px; }
-
+.hosts { order: 3; flex: 1 0 100%; margin-bottom: 4px; }
 .seg { display: flex; background: var(--raised); border-radius: 999px; padding: 2px; }
-.seg button { flex: 1; height: 32px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap; padding: 0 10px; }
+.seg button { flex: 1; height: 32px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap; padding: 0 14px; transition: background .15s, color .15s; }
+.seg button:not(:disabled):not(.on):hover { color: var(--text); }
 .seg button.on { background: var(--text); color: var(--ground); }
 .seg button:disabled { color: var(--chart3); cursor: default; }
 .seg button.on:disabled { background: var(--chart3); color: var(--ground); }
-.hosts button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 36px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
-.dot.live { background: var(--accent); } .dot.off { background: var(--negative); }
+.hosts button { display: flex; align-items: center; justify-content: center; gap: 8px; height: 36px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chart3); flex: none; }
+.dot.live { background: var(--accent); } .dot.wait { background: var(--warning); } .dot.off { background: var(--negative); }
 
 .title { padding: 18px 2px 14px; }
+.title .row { align-items: baseline; flex-wrap: wrap; }
 .title h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
-#spec { color: var(--faint); font-size: 13px; margin-top: 2px; }
-#finding { font-size: 15px; margin-top: 8px; color: var(--muted); }
+#spec { color: var(--faint); font-size: 13px; }
+#finding { font-size: 15px; margin-top: 6px; color: var(--muted); text-wrap: pretty; }
 
-.card { background: var(--surface); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+/* Cards. On a phone they stack; from 900 px the two columns sit side by side, as in the app. */
+main { display: flex; flex-direction: column; gap: var(--gap); }
+.col { display: contents; }
+#powerCard { order: 1; } #gridCard { order: 2; } #fanCard { order: 3; } #procCard { order: 4; } #asleep { order: 0; }
+.card { background: var(--surface); border-radius: 16px; padding: 16px; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h2 { font-size: 15px; font-weight: 600; }
 .tabs { display: flex; gap: 14px; }
 .tabs button { font-size: 14px; color: var(--faint); padding: 4px 0; border-bottom: 1.5px solid transparent; }
+.tabs button:hover { color: var(--text); }
 .tabs button.on { color: var(--text); font-weight: 600; border-color: var(--text); }
 
-.big { font-size: 40px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
+.big { font-size: 44px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; }
 .big small { font-size: 17px; font-weight: 400; color: var(--muted); margin-left: 4px; letter-spacing: 0; }
 .stats { text-align: right; font-size: 14px; color: var(--muted); }
 .stats b { color: var(--text); font-weight: 600; margin-left: 8px; }
 .stats div + div { margin-top: 4px; }
 #battery { color: var(--muted); font-size: 13px; margin-top: 8px; }
 #battery:empty { display: none; }
-#chart { display: block; width: 100%; height: 170px; margin: 14px 0 12px; touch-action: pan-y; }
+#chart { display: block; width: 100%; height: 172px; margin: 16px 0 14px; touch-action: pan-y; cursor: crosshair; }
 
 .bar { position: relative; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: flex; }
-.bar i { display: block; height: 100%; }
+.bar i { display: block; height: 100%; transition: width .4s ease; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 22px; margin-top: 12px; font-size: 14px; }
 .legend div { display: flex; align-items: center; gap: 8px; color: var(--muted); }
 .legend b { margin-left: auto; color: var(--text); font-weight: 600; }
 .sw { width: 9px; height: 9px; border-radius: 2px; flex: none; }
 
 .grid { display: grid; grid-template-columns: 1fr 1fr; padding: 0; }
-.cell { padding: 14px; min-height: 132px; min-width: 0; border-bottom: 1px solid var(--line); }
+.cell { padding: 14px; min-height: 134px; min-width: 0; border-bottom: 1px solid var(--line); }
 .cell:nth-child(odd) { border-right: 1px solid var(--line); }
 .cell:nth-last-child(-n+2) { border-bottom: 0; }
 .cell .row { min-height: 24px; }
@@ -92,7 +103,7 @@ h2 { font-size: 15px; font-weight: 600; }
 .pill.bad { background: #2c1a20; color: var(--negative); }
 .cores { display: flex; align-items: flex-end; gap: 2px; height: 38px; margin-top: 2px; }
 .cores i { flex: 1; height: 100%; background: var(--raised); border-radius: 2px; position: relative; overflow: hidden; }
-.cores i b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); }
+.cores i b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); transition: height .4s ease; }
 .cores .gap { flex: 0 0 5px; background: none; }
 .io { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin-top: 10px; font-size: 14px; }
 .io span { color: var(--muted); } .io b { text-align: right; font-weight: 500; }
@@ -103,7 +114,7 @@ h2 { font-size: 15px; font-weight: 600; }
 .fan .bar { margin-top: 12px; }
 .scale { display: flex; justify-content: space-between; color: var(--faint); font-size: 12px; margin-top: 6px; }
 .slider { position: relative; margin-top: 4px; }
-input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 34px; background: transparent; display: block; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 34px; background: transparent; display: block; cursor: pointer; }
 input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--raised); }
 input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -10px; border-radius: 50%; background: var(--text); box-shadow: inset 0 0 0 9px var(--text), inset 0 0 0 13px var(--ground); }
 input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--raised); }
@@ -112,66 +123,96 @@ input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; bord
 #fanErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
 #fanErr:empty { display: none; }
 
-.procs .head { color: var(--faint); font-size: 13px; }
-.proc { display: grid; grid-template-columns: 1fr 70px 64px; gap: 8px; align-items: baseline; padding: 10px 0 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.procs .head { display: grid; grid-template-columns: 72px 64px; gap: 8px; text-align: right; color: var(--faint); font-size: 13px; }
+.proc { display: grid; grid-template-columns: 1fr 72px 64px; gap: 8px; align-items: baseline; padding: 10px 0 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
 .proc:last-child { border-bottom: 0; }
 .proc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proc b { text-align: right; font-weight: 500; }
-.proc .use { grid-column: 1 / -1; height: 2px; border-radius: 1px; background: var(--chart2); margin-top: -2px; }
+.proc .use { grid-column: 1 / -1; height: 2px; border-radius: 1px; background: var(--chart2); margin-top: -2px; transition: width .4s ease; }
 .empty { color: var(--faint); font-size: 14px; padding: 8px 0 2px; }
-footer { color: var(--faint); font-size: 13px; padding: 6px 2px; }
+
+#asleep { display: none; text-align: center; padding: 40px 24px; }
+#asleep .moon { width: 44px; height: 44px; margin: 0 auto 14px; border-radius: 50%; box-shadow: inset -10px -8px 0 0 var(--chart3); transform: rotate(-20deg); }
+#asleep h2 { font-size: 17px; }
+#asleep p { color: var(--muted); font-size: 14px; margin-top: 6px; }
+body.away #asleep { display: block; }
+body.away #powerCard, body.away #gridCard, body.away #fanCard, body.away #procCard { display: none; }
+
+footer { display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 13px; padding: 14px 2px 0; }
+
+@media (min-width: 900px) {
+  body { max-width: 1160px; padding: 0 32px 32px; }
+  .brand, #stamp { height: 68px; }
+  .top { flex-wrap: nowrap; border-bottom: 1px solid var(--line); margin: 0 -32px; padding: 0 32px; }
+  .hosts { order: 0; flex: 0 0 auto; margin: 0 0 0 auto; }
+  .hosts button { height: 32px; padding: 0 16px; }
+  .title { padding: 22px 2px 18px; }
+  .title h1 { font-size: 30px; }
+  #finding { font-size: 16px; }
+  :root { --gap: 16px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+  .col { display: flex; flex-direction: column; gap: var(--gap); }
+  .card { padding: 20px; }
+  .cell { padding: 16px 18px; }
+  #chart { height: 210px; }
+  body.away main { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
 <header class="top">
   <div class="brand"><img src="icon.png" alt="">Vitals</div>
+  <nav class="seg hosts" id="hosts" aria-label="Mac">
+    <button data-h="here"><i class="dot"></i><span>This Mac</span></button>
+    <button data-h="peer"><i class="dot"></i><span>Other Mac</span></button>
+  </nav>
   <div id="stamp">Connecting…</div>
 </header>
-<nav class="seg hosts" id="hosts">
-  <button data-h="mini"><i class="dot"></i><span>Mac mini</span></button>
-  <button data-h="peer"><i class="dot"></i><span>MacBook</span></button>
-</nav>
 
 <section class="title">
-  <h1 id="name">Mac mini</h1>
-  <div id="spec">&nbsp;</div>
+  <div class="row"><h1 id="name">Vitals</h1><span id="spec"></span></div>
   <p id="finding">Connecting…</p>
 </section>
 
-<section class="card">
-  <div class="row"><h2>Power</h2>
-    <div class="tabs" id="ranges"><button>10 m</button><button>1 h</button><button>24 h</button><button>14 d</button></div>
+<main>
+  <div class="col">
+    <section class="card" id="asleep"><div class="moon"></div><h2 id="asleepTitle">Asleep</h2><p id="asleepNote"></p></section>
+    <section class="card" id="powerCard">
+      <div class="row"><h2>Power</h2>
+        <div class="tabs" id="ranges"><button>10 m</button><button>1 h</button><button>24 h</button><button>14 d</button></div>
+      </div>
+      <div class="row" style="margin-top:14px;align-items:flex-end">
+        <div class="big"><span id="watts">—</span><small>W</small></div>
+        <div class="stats"><div><span>Today</span><b id="today">—</b></div><div><span id="peakL">Peak · 1 h</span><b id="peak">—</b></div></div>
+      </div>
+      <div id="battery"></div>
+      <canvas id="chart" aria-label="Power over time"></canvas>
+      <div class="bar" id="split"></div>
+      <div class="legend" id="legend"></div>
+    </section>
+    <section class="card" id="fanCard">
+      <div class="row"><h2 id="fanTitle">Fan</h2>
+        <div class="seg" id="modes" style="width:216px"><button data-m="auto">Auto</button><button data-m="fixed">Fixed</button><button data-m="curve">Curve</button></div>
+      </div>
+      <div id="fans"></div>
+      <p id="fanNote"></p>
+      <p id="fanErr"></p>
+    </section>
   </div>
-  <div class="row" style="margin-top:12px;align-items:flex-end">
-    <div class="big"><span id="watts">—</span><small>W</small></div>
-    <div class="stats"><div><span id="todayL">Today</span><b id="today">—</b></div><div><span id="peakL">Peak · 1 h</span><b id="peak">—</b></div></div>
+  <div class="col">
+    <section class="card grid" id="gridCard">
+      <div class="cell" id="cpu"></div><div class="cell" id="mem"></div>
+      <div class="cell" id="therm"></div><div class="cell" id="gpu"></div>
+      <div class="cell" id="disk"></div><div class="cell" id="net"></div>
+    </section>
+    <section class="card procs" id="procCard">
+      <div class="row"><h2>Using the CPU now</h2><div class="head"><span>CPU</span><span>Memory</span></div></div>
+      <div id="procs"></div>
+    </section>
   </div>
-  <div id="battery"></div>
-  <canvas id="chart"></canvas>
-  <div class="bar" id="split"></div>
-  <div class="legend" id="legend"></div>
-</section>
-
-<section class="card grid">
-  <div class="cell" id="cpu"></div><div class="cell" id="mem"></div>
-  <div class="cell" id="therm"></div><div class="cell" id="gpu"></div>
-  <div class="cell" id="disk"></div><div class="cell" id="net"></div>
-</section>
-
-<section class="card">
-  <div class="row"><h2 id="fanTitle">Fan</h2>
-    <div class="seg" id="modes" style="width:210px"><button data-m="auto">Auto</button><button data-m="fixed">Fixed</button><button data-m="curve">Curve</button></div>
-  </div>
-  <div id="fans"></div>
-  <p id="fanNote"></p>
-  <p id="fanErr"></p>
-</section>
-
-<section class="card procs">
-  <div class="row"><h2>Using the CPU now</h2><div class="head" style="display:grid;grid-template-columns:70px 64px;gap:8px;text-align:right"><span>CPU</span><span>Memory</span></div></div>
-  <div id="procs"></div>
-</section>
-<footer id="foot"></footer>
+</main>
+<footer><span id="foot"></span><span>Samples only while this page is open</span></footer>
 
 <script>
 "use strict";
@@ -180,11 +221,14 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch {
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const RANGES = ['10m', '1h', '24h', '14d'], LABELS = ['10 m', '1 h', '24 h', '14 d'];
 const CEILING = 95, CURVE = [50, 85];
-const blank = () => ({ info: null, snap: null, live: [], state: 'connecting', seen: 0, hist: {} });
-const st = { host: store.get('host', 'mini'), range: +store.get('range', 1) || 0, mini: blank(), peer: blank(),
-             hasPeer: true, pending: null, dragging: false, err: '', hover: null };
-if (!['mini', 'peer'].includes(st.host)) st.host = 'mini';
+// "here" is the Mac serving this page; "peer" is the other one, read straight from its own address.
+const blank = base => ({ base, info: null, snap: null, live: [], state: 'idle', seen: 0, hist: {}, es: null });
+const st = { host: store.get('host', 'here'), range: +store.get('range', 1), here: blank(''), peer: blank(null),
+             pending: null, dragging: false, err: '', hover: null };
+if (!['here', 'peer'].includes(st.host)) st.host = 'here';
 if (!(st.range >= 0 && st.range <= 3)) st.range = 1;
+try { st.peer.info = JSON.parse(store.get('peerInfo', 'null')); } catch {}
+st.peer.seen = +store.get('peerSeen', 0) || 0;
 
 // ---------- formatting (the app's Fmt) ----------
 const F = {
@@ -203,50 +247,44 @@ const F = {
   day: d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
 };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const shortName = h => h.info?.model?.split(' (')[0] || (h === st.mini ? 'Mac mini' : 'MacBook');
+const shortName = h => h.info?.model?.split(' (')[0] || (h === st.here ? 'This Mac' : guessName(h.base));
+/** Before the other Mac has ever answered: a name from its tailnet address, e.g. "MacBook" from shmulis-macbook-pro-2. */
+const guessName = url => { const n = (url || '').toLowerCase();
+  return n.includes('macbook') ? 'MacBook' : n.includes('mini') ? 'Mac mini' : n.includes('studio') ? 'Mac Studio' : n.includes('imac') ? 'iMac' : 'Other Mac'; };
 const cur = () => st[st.host];
+const now = () => Date.now() / 1000;
 
 // ---------- data ----------
+// Only the Mac on screen streams, and only while the page is visible: that Mac samples once a second
+// while someone looks and not at all otherwise.
 function took(h, s) {
-  h.snap = s; h.seen = s.t;
+  h.snap = s; h.seen = s.t; h.state = 'live';
   if (s.wSystem != null) h.live.push({ t: s.t, w: s.wSystem });
   while (h.live.length && s.t - h.live[0].t > 900) h.live.shift();
+  if (h === st.peer) store.set('peerSeen', String(s.t));
 }
 
-let es = null;
-function openEvents() {
-  if (es) return;
-  es = new EventSource('events');
-  es.addEventListener('info', e => { st.mini.info = JSON.parse(e.data); render(); });
-  es.onmessage = e => { took(st.mini, JSON.parse(e.data)); st.mini.state = 'live'; render(); };
-  es.onerror = () => { st.mini.state = 'connecting'; render(); };
+function open(h) {
+  if (h.es || h.base == null) return;
+  if (h.state !== 'live') h.state = 'wait';
+  const es = h.es = new EventSource(h.base + 'events');
+  es.addEventListener('info', e => { h.info = JSON.parse(e.data); if (h === st.peer) store.set('peerInfo', e.data); render(); });
+  es.onmessage = e => { took(h, JSON.parse(e.data)); render(); };
+  es.onerror = () => { if (now() - h.seen > 6) h.state = h === st.peer ? 'off' : 'wait'; render(); };
 }
-function closeEvents() { if (es) { es.close(); es = null; } }
-
-let peerBusy = false;
-async function pollPeer() {
-  if (peerBusy || document.hidden) return;
-  peerBusy = true;
-  try {
-    const r = await fetch('peer', { cache: 'no-store' }).then(r => r.json());
-    if (r.state === 'none') { st.hasPeer = false; if (st.host === 'peer') pick('mini'); }
-    else {
-      const p = st.peer;
-      if (r.info) p.info = r.info;
-      p.state = r.state; p.seen = r.seen || p.seen;
-      if (r.snap && r.snap.t !== p.snap?.t) took(p, r.snap);
-      if (!r.snap && r.state !== 'live') p.snap = p.state === 'connecting' ? p.snap : null;
-    }
-  } catch { st.peer.state = 'asleep'; }
-  peerBusy = false;
-  render();
+function shut(h) { if (h.es) { h.es.close(); h.es = null; } if (h.state === 'live') h.state = 'idle'; }
+function connect() {
+  const other = st.host === 'here' ? st.peer : st.here;
+  shut(other);
+  if (document.hidden) shut(cur()); else open(cur());
 }
 
 async function loadHistory() {
-  const host = st.host, key = RANGES[st.range === 0 ? 1 : st.range];
+  const h = cur(), key = RANGES[st.range === 0 ? 1 : st.range];
+  if (h.base == null) return;
   try {
-    const r = await fetch(`history?range=${key}&host=${host}`, { cache: 'no-store' });
-    if (r.ok) { st[host].hist[key] = await r.json(); render(); }
+    const r = await fetch(`${h.base}history?range=${key}`, { cache: 'no-store' });
+    if (r.ok) { h.hist[key] = await r.json(); render(); }
   } catch {}
 }
 
@@ -256,17 +294,16 @@ async function setFan(policy) {
   render();
   try {
     const r = await fetch('fan', { method: 'POST', headers: { 'X-Vitals': '1' }, body: policy });
-    if (!r.ok) { st.err = (await r.json().catch(() => ({}))).error || 'The Mac mini refused the change.'; st.pending = null; }
-  } catch { st.err = 'The Mac mini did not answer.'; st.pending = null; }
+    if (!r.ok) { st.err = (await r.json().catch(() => ({}))).error || 'The Mac refused the change.'; st.pending = null; }
+  } catch { st.err = 'The Mac did not answer.'; st.pending = null; }
   render();
 }
 
 // ---------- the finding (Dashboard.finding) ----------
 function finding(h) {
   const s = h.snap;
-  if (h === st.peer && h.state === 'asleep')
-    return [`${shortName(h)} is asleep or off Tailscale` + (h.seen ? `; last seen ${ago(h.seen)}.` : '.'), 'var(--muted)'];
-  if (!s) return [h === st.mini ? 'Connecting to the Mac mini…' : `Connecting to ${shortName(h)}…`, 'var(--muted)'];
+  if (h.state === 'off') return [`${shortName(h)} is asleep or off Tailscale.`, 'var(--muted)'];
+  if (!s) return [`Connecting to ${shortName(h) === 'This Mac' ? 'this Mac' : shortName(h)}…`, 'var(--muted)'];
   const top = s.procs?.[0]?.name;
   const boot = s.volumes?.find(v => v.boot);
   if (s.thermal >= 2) return [`Thermal pressure is ${s.thermal === 2 ? 'serious' : 'critical'}: macOS is slowing the chip to cool it.`, 'var(--negative)'];
@@ -286,7 +323,7 @@ function finding(h) {
   return [`Running easy: ${F.wu(s.wSystem)}, CPU ${F.temp(s.tCPU)}${fan}.`, 'var(--muted)'];
 }
 function ago(t) {
-  const s = Date.now() / 1000 - t;
+  const s = now() - t;
   if (s < 90) return 'just now';
   if (s < 86400 && new Date(t * 1000).getDate() === new Date().getDate()) return 'at ' + F.clock(t);
   return F.dur(s) + ' ago';
@@ -294,22 +331,25 @@ function ago(t) {
 
 // ---------- render ----------
 function render() {
-  const h = cur(), s = h.snap;
+  const h = cur(), away = h.state === 'off';
+  const s = away ? null : h.snap;
+  document.body.classList.toggle('away', away);
 
   for (const b of $('hosts').children) {
     const k = b.dataset.h, x = st[k];
     b.classList.toggle('on', k === st.host);
-    b.style.display = k === 'peer' && !st.hasPeer ? 'none' : '';
-    b.querySelector('.dot').className = 'dot ' + (x.state === 'live' ? 'live' : x.state === 'asleep' ? 'off' : '');
+    b.querySelector('.dot').className = 'dot ' + ({ live: 'live', up: 'live', wait: 'wait', off: 'off' }[x.state] || '');
     b.querySelector('span').textContent = shortName(x);
   }
-  $('stamp').textContent = h.state === 'live' && s ? 'Live · ' + F.clock(s.t, true)
-    : h.state === 'asleep' ? 'Asleep' : 'Connecting…';
+  $('hosts').style.display = st.peer.base ? '' : 'none';
+  $('stamp').textContent = h.state === 'live' && s ? 'Live · ' + F.clock(s.t, true) : away ? 'Asleep' : 'Connecting…';
   $('name').textContent = shortName(h);
   const i = h.info;
-  $('spec').textContent = i ? `${i.chip.replace('Apple ', '')} · ${i.cores} cores · ${F.gb(i.memory, 0)} GB · ${i.os}` : ' ';
+  $('spec').textContent = i ? `${i.chip.replace('Apple ', '')} · ${i.cores} cores · ${F.gb(i.memory, 0)} GB · ${i.os}` : '';
   const [line, tone] = finding(h);
   $('finding').innerHTML = line; $('finding').style.color = tone;
+  $('asleepTitle').textContent = `${shortName(h)} is asleep`;
+  $('asleepNote').textContent = (h.seen ? `Last seen ${ago(h.seen)}. ` : '') + 'It shows up here again as soon as it wakes and joins Tailscale.';
 
   power(h, s);
   cells(s);
@@ -324,21 +364,19 @@ function power(h, s) {
   const hist = h.hist[RANGES[st.range === 0 ? 1 : st.range]];
   const days = hist?.days || [];
   const today = days.find(d => d.day === F.day(new Date()));
+  $('today').textContent = today ? F.energy(today.wh) : '—';
   if (st.range === 3) {
-    $('todayL').textContent = 'Today'; $('today').textContent = today ? F.energy(today.wh) : '—';
     $('peakL').textContent = '14 days'; $('peak').textContent = days.length ? F.energy(days.reduce((a, d) => a + d.wh, 0)) : '—';
   } else {
     const { pts, from } = series(h);
-    const rowsPeak = (hist?.rows || []).filter(r => r.t >= from).map(r => r.wMax);
-    const peak = Math.max(-1, ...rowsPeak, ...pts.map(p => p.w));
-    $('todayL').textContent = 'Today'; $('today').textContent = today ? F.energy(today.wh) : '—';
+    const peak = Math.max(-1, ...(hist?.rows || []).filter(r => r.t >= from).map(r => r.wMax), ...pts.map(p => p.w));
     $('peakL').textContent = 'Peak · ' + LABELS[st.range]; $('peak').textContent = peak >= 0 ? F.wu(peak) : '—';
   }
   const b = s?.battery;
   $('battery').textContent = b ? `Battery ${Math.round(b.percent)}%` + (b.charging ? ' · charging' : b.external ? ' · on power' : ' · on battery')
     + (b.inWatts != null ? ` · ${F.wu(b.inWatts)} from the adapter` : '') + (b.health != null ? ` · ${Math.round(b.health)}% health` : '') : '';
 
-  // Where the watts go.
+  // Where the watts go. Chips that leave a counter at zero get a dash, not a made-up 0 W.
   const parts = [['CPU', s?.wCPU, 'var(--accent)'], ['GPU', s?.wGPU, 'var(--chart2)'], ['Memory', s?.wDRAM, 'var(--chart3)']];
   const known = parts.reduce((a, p) => a + (p[1] || 0), 0);
   parts.push(['Other', s?.wSystem != null ? Math.max(0, s.wSystem - known) : null, 'var(--chart4)']);
@@ -350,18 +388,17 @@ function power(h, s) {
 
 /** The points for the chosen range, oldest first: logged minutes, then the live readings after them. */
 function series(h) {
-  const now = h.snap?.t ?? Date.now() / 1000;
-  const span = [600, 3600, 86400, 86400 * 14][st.range], from = now - span;
+  const end = h.snap?.t ?? now();
+  const span = [600, 3600, 86400, 86400 * 14][st.range], from = end - span;
   const hist = h.hist[RANGES[st.range === 0 ? 1 : st.range]];
   const pts = (hist?.rows || []).filter(r => r.t >= from).map(r => ({ t: r.t + (st.range === 2 ? 150 : 30), w: r.w }));
   const last = pts.length ? pts[pts.length - 1].t : from;
-  return { pts: pts.concat(h.live.filter(p => p.t > last + 30 && p.t >= from)), from, now };
+  return { pts: pts.concat(h.live.filter(p => p.t > last + 30 && p.t >= from)), from, now: end };
 }
 
 function nice(max) {
   const raw = Math.max(max, 1) / 2, mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw);
-  return step;
+  return [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw);
 }
 
 function drawChart(h) {
@@ -375,36 +412,39 @@ function drawChart(h) {
   const plot = { x0: 0, x1: W - 50, y0: 6, y1: H - 22 };
   const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
   const msg = text => { g.fillStyle = '#8f9296'; g.textAlign = 'center'; g.fillText(text, pw / 2, ph / 2 + 6); };
+  const grid = (step, label) => {
+    g.strokeStyle = '#23262b'; g.lineWidth = 1; g.fillStyle = '#8f9296'; g.textAlign = 'right';
+    for (let k = 0; k <= 2; k++) {
+      const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
+      g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
+      g.fillText(label(step * k), W, y + 4);
+    }
+  };
 
-  if (st.range === 3) return dayBars(g, h, plot, msg);
-  const { pts, from, now } = series(h), span = now - from;
+  if (st.range === 3) return dayBars(g, h, plot, msg, grid);
+  const { pts, from, now: end } = series(h), span = end - from;
   const step = nice(Math.max(0, ...pts.map(p => p.w)) * 1.05), top = step * 2;
-  g.strokeStyle = '#23262b'; g.lineWidth = 1; g.fillStyle = '#8f9296'; g.textAlign = 'left';
-  for (let k = 0; k <= 2; k++) {
-    const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
-    g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
-    g.textAlign = 'right'; g.fillText(`${+(step * k).toFixed(1)} W`, W, y + 4);
-  }
+  grid(step, v => `${+v.toFixed(1)} W`);
   for (let k = 0; k <= 3; k++) {
     const t = from + span * k / 3, x = plot.x0 + pw * k / 3;
-    const label = k === 3 ? 'now' : st.range === 0 ? `−${Math.round((now - t) / 60)} m` : F.clock(t);
     g.textAlign = k === 0 ? 'left' : k === 3 ? 'right' : 'center';
-    g.fillText(label, x, H - 4);
+    g.fillText(k === 3 ? 'now' : st.range === 0 ? `−${Math.round((end - t) / 60)} m` : F.clock(t), x, H - 4);
   }
   if (pts.length < 2) return msg(st.range === 0 ? 'Collecting the first readings…' : 'The log fills from the first minute the agent ran.');
   const px = t => plot.x0 + (t - from) / span * pw, py = w => plot.y1 - Math.min(w, top) / top * ph;
   const gap = [120, 180, 900][st.range];
   const runs = [[]];
   pts.forEach((p, i) => { if (i && p.t - pts[i - 1].t > gap) runs.push([]); runs[runs.length - 1].push(p); });
+  const fill = g.createLinearGradient(0, plot.y0, 0, plot.y1);
+  fill.addColorStop(0, 'rgba(198,242,78,0.22)'); fill.addColorStop(1, 'rgba(198,242,78,0.02)');
   for (const run of runs) {
-    if (!run.length) continue;
     g.beginPath();
     run.forEach((p, i) => i ? g.lineTo(px(p.t), py(p.w)) : g.moveTo(px(p.t), py(p.w)));
     g.strokeStyle = '#c6f24e'; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
     g.lineTo(px(run[run.length - 1].t), plot.y1); g.lineTo(px(run[0].t), plot.y1); g.closePath();
-    g.fillStyle = 'rgba(198,242,78,0.10)'; g.fill();
+    g.fillStyle = fill; g.fill();
   }
-  if (st.hover != null) {
+  if (st.hover != null && st.hover <= plot.x1) {
     const t = from + (st.hover - plot.x0) / pw * span;
     const near = pts.reduce((a, p) => Math.abs(p.t - t) < Math.abs(a.t - t) ? p : a);
     const x = px(near.t), y = py(near.w);
@@ -418,17 +458,12 @@ function drawChart(h) {
   }
 }
 
-function dayBars(g, h, plot, msg) {
+function dayBars(g, h, plot, msg, grid) {
   const days = (h.hist['14d']?.days || []).slice(-14);
   if (!days.length) return msg('No days logged yet.');
   const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
   const step = nice(Math.max(...days.map(d => d.wh)) * 1.05), top = step * 2;
-  g.strokeStyle = '#23262b'; g.fillStyle = '#8f9296'; g.textAlign = 'left';
-  for (let k = 0; k <= 2; k++) {
-    const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
-    g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
-    g.textAlign = 'right'; g.fillText(F.energy(step * k), W, y + 4);
-  }
+  grid(step, F.energy);
   const slots = 14, bw = (pw - (slots - 1) * 4) / slots, today = F.day(new Date());
   days.forEach((d, i) => {
     const x = plot.x0 + (slots - days.length + i) * (bw + 4), bh = Math.max(2, d.wh / top * ph);
@@ -446,7 +481,7 @@ const bar = (frac, color = 'var(--chart2)') => `<div class="bar"><i style="width
 const pill = (text, kind = '') => `<span class="pill ${kind}">${text}</span>`;
 
 function cells(s) {
-  const dash = (title) => `<div class="row"><span class="label">${title}</span></div><div class="mid">—</div>`;
+  const dash = title => `<div class="row"><span class="label">${title}</span></div><div class="mid">—</div>`;
   if (!s) { [['cpu', 'CPU'], ['mem', 'Memory'], ['therm', 'Thermal'], ['gpu', 'GPU'], ['disk', 'Storage'], ['net', 'Network and disk']].forEach(([id, t]) => $(id).innerHTML = dash(t)); return; }
 
   const e = s.eCores, cores = s.cores.map((v, i) => (i === e && e > 0 ? '<i class="gap"></i>' : '') + `<i><b style="height:${Math.max(4, v)}%"></b></i>`).join('');
@@ -490,7 +525,7 @@ function cells(s) {
 }
 
 function policyOf(h, s) {
-  if (h === st.mini && st.pending) {
+  if (h === st.here && st.pending) {
     if (Date.now() < st.pending.until && s?.fanPolicy !== st.pending.policy) return st.pending.policy;
     st.pending = null;
   }
@@ -499,7 +534,7 @@ function policyOf(h, s) {
 
 function fanCard(h, s) {
   const fans = s?.fans || [];
-  const control = h === st.mini && !!s?.root;
+  const control = h === st.here && !!s?.root;
   const policy = policyOf(h, s).split(' '), mode = policy[0];
   $('fanTitle').textContent = fans.length > 1 ? 'Fans' : 'Fan';
   for (const b of $('modes').children) { b.classList.toggle('on', b.dataset.m === mode); b.disabled = !control; }
@@ -519,13 +554,13 @@ function fanCard(h, s) {
   }
 
   let note;
-  if (h === st.peer) note = 'Read-only here. Change these fans from Vitals on the MacBook itself.';
-  else if (s && !s.root) note = "Needs a one-time setup on the Mac mini: ssh -t mac-mini 'sudo ~/.vitals/vitals-agent setup-root'";
+  if (h === st.peer) note = `Read-only here. Change these fans from ${shortName(h)}’s own page or the Vitals app.`;
+  else if (s && !s.root) note = 'Needs a one-time setup on this Mac: sudo ~/.vitals/vitals-agent setup-root';
   else if (mode === 'fixed') note = `Holds the speed you set; full speed above ${CEILING}°. Back to Auto when you close this page.`;
   else if (mode === 'curve') note = `Follows the CPU: minimum at ${policy[1] || CURVE[0]}°, full at ${policy[2] || CURVE[1]}°. Back to Auto when you close this page.`;
   else note = 'macOS is choosing the speed.';
   $('fanNote').textContent = note;
-  $('fanErr').textContent = h === st.mini ? st.err : '';
+  $('fanErr').textContent = h === st.here ? st.err : '';
 }
 
 function procs(s) {
@@ -539,10 +574,9 @@ function procs(s) {
 // ---------- input ----------
 function pick(host) {
   st.host = host; store.set('host', host); st.hover = null;
-  if (host === 'peer') pollPeer();
-  loadHistory(); render();
+  connect(); loadHistory(); render();
 }
-$('hosts').addEventListener('click', e => { const b = e.target.closest('button'); if (b) pick(b.dataset.h); });
+$('hosts').addEventListener('click', e => { const b = e.target.closest('button'); if (b && b.dataset.h !== st.host) pick(b.dataset.h); });
 $('ranges').addEventListener('click', e => {
   const i = [...$('ranges').children].indexOf(e.target.closest('button'));
   if (i < 0) return;
@@ -550,7 +584,7 @@ $('ranges').addEventListener('click', e => {
 });
 $('modes').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b || b.disabled) return;
-  const s = st.mini.snap, f = s?.fans?.[0];
+  const f = st.here.snap?.fans?.[0];
   if (b.dataset.m === 'fixed') setFan(`fixed ${f ? Math.max(f.min, Math.min(f.max, Math.round(f.rpm / 50) * 50)) : 2000}`);
   else if (b.dataset.m === 'curve') setFan(`curve ${CURVE[0]} ${CURVE[1]}`);
   else setFan('auto');
@@ -574,18 +608,30 @@ document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse' && s
 window.addEventListener('resize', () => drawChart(cur()));
 
 // ---------- lifecycle ----------
-// Sampling on the Mac mini runs only while this page is visible; a fan off Auto stays there only
-// while the page keeps checking in.
-function wake() { openEvents(); loadHistory(); if (st.host === 'peer') pollPeer(); }
-document.addEventListener('visibilitychange', () => document.hidden ? closeEvents() : wake());
-setInterval(() => { if (st.host === 'peer') pollPeer(); }, 1000);
+document.addEventListener('visibilitychange', () => { connect(); if (!document.hidden) loadHistory(); });
 setInterval(() => { if (!document.hidden) loadHistory(); }, 60000);
-setInterval(() => {
-  if (!document.hidden && (st.mini.snap?.fanPolicy || 'auto') !== 'auto')
+setInterval(() => {         // a stream that went quiet: the Mac fell asleep or left the tailnet
+  const h = cur();
+  if (h === st.peer && h.state === 'live' && now() - h.seen > 8) { h.state = 'off'; render(); }
+}, 2000);
+setInterval(() => {         // a fan off Auto stays there only while this page keeps checking in
+  if (!document.hidden && st.host === 'here' && (st.here.snap?.fanPolicy || 'auto') !== 'auto')
     fetch('alive', { method: 'POST', headers: { 'X-Vitals': '1' } }).catch(() => {});
 }, 20000);
-pollPeer();
-wake();
+
+// The other Mac's name and whether it is awake, without starting its sampling.
+async function probePeer() {
+  if (!st.peer.base || st.peer.es) return;
+  try {
+    const c = await fetch(st.peer.base + 'config', { cache: 'no-store' }).then(r => r.json());
+    st.peer.info = c.info; store.set('peerInfo', JSON.stringify(c.info));
+    if (st.peer.state !== 'live') st.peer.state = 'up';
+  } catch { st.peer.state = 'off'; }
+  render();
+}
+
+fetch('config', { cache: 'no-store' }).then(r => r.json()).then(c => { st.peer.base = c.peer || null; st.here.info = c.info; })
+  .catch(() => {}).finally(() => { if (!st.peer.base) st.host = 'here'; connect(); loadHistory(); probePeer(); render(); });
 render();
 </script>
 </body>
