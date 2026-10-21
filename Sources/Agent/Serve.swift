@@ -40,7 +40,10 @@ private var server: WebServer?     // lives for the whole process
 func serve() -> Never {
     let port = option("--port").flatMap(UInt16.init) ?? 8787
     guard let fd = launchdSocket() ?? bindLocal(port) else { fail("cannot listen on 127.0.0.1:\(port)") }
-    let peer = option("--peer").map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+    // --peer: one or more other Macs' addresses, as before discovery; Tailscale now finds them too.
+    let peers = (option("--peer") ?? "").split(separator: ",").map { p in p.hasSuffix("/") ? String(p) : p + "/" }
+    Fleet.extra = peers
+    let peer = peers.first
     if let p = option("--screen-port").flatMap(UInt16.init) { Screen.port = p }     // for tests; always 127.0.0.1
     if let s = option("--screen-idle").flatMap(Double.init), s >= 5 { Screen.idleLimit = s }
     let origins = Set((option("--allow-origin") ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " /")) })
@@ -78,8 +81,11 @@ private func bindLocal(_ port: UInt16) -> Int32? {
 func installServe() {
     let port = option("--port").flatMap(UInt16.init) ?? 8787
     var a = ["serve", "--port", String(port)]
+    // Your other Macs are found through Tailscale; --peer is only for one that isn't on your account.
     if let peer = option("--peer") {
-        guard URL(string: peer)?.scheme == "https" else { fail("--peer takes https://other-mac.your-tailnet.ts.net") }
+        guard peer.split(separator: ",").allSatisfy({ URL(string: String($0))?.scheme == "https" }) else {
+            fail("--peer takes https://other-mac.your-tailnet.ts.net (several, separated by commas)")
+        }
         a += ["--peer", peer]
     }
     if let o = option("--allow-origin") { a += ["--allow-origin", o] }
@@ -233,7 +239,7 @@ final class WebServer {
     /// Lets the page on the other Mac read this one. GET only: no preflight is ever granted, so a page
     /// elsewhere can watch these fans but never post to them.
     private func cors(_ c: Conn) -> String {
-        guard let o = c.origin, origins.contains(o) else { return "" }
+        guard let o = c.origin, origins.contains(o) || Fleet.allows(origin: o) else { return "" }
         return "Access-Control-Allow-Origin: \(o)\r\nVary: Origin\r\n"
     }
 
@@ -268,6 +274,12 @@ final class WebServer {
         // "apps" lets the other Mac's page point to this one's Apps card; it says only whether it is on.
         case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info),\"apps\":\(Control.load() != nil),\"screen\":\(Control.load()?.screen == true)}")
         case ("GET", "/events"): watch(c)
+        case ("GET", "/fleet"):
+            struct Reply: Encodable { var members: [Fleet.Member] }
+            send(c, 200, json: json(Reply(members: Fleet.membersNow())))
+        case ("GET", "/summary"):
+            guard let i = try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)) else { return send(c, 500, json: "null") }
+            send(c, 200, json: json(Fleet.summary(info: i)))
         case ("GET", "/history"): history(r, c)
         case ("GET", "/ssd"):
             DispatchQueue.global(qos: .utility).async {

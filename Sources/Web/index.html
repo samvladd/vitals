@@ -51,6 +51,24 @@ button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .seg button:disabled { color: var(--chart3); cursor: default; }
 .seg button.on:disabled { background: var(--chart3); color: var(--ground); }
 .hosts button { display: flex; align-items: center; justify-content: center; gap: 8px; height: 36px; }
+.hosts { overflow-x: auto; scrollbar-width: none; }
+.hosts::-webkit-scrollbar { display: none; }
+.hosts button { flex: 1 0 auto; }
+
+/* The fleet: every Mac at a glance; tap one to see it. */
+#fleetCard { order: -1; }
+.fleet { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+@media (min-width: 900px) { .fleet { grid-template-columns: repeat(auto-fill, minmax(190px, 240px)); } }
+.mac { text-align: left; background: var(--raised); border-radius: 12px; padding: 11px 12px; border: 1.5px solid transparent; transition: border-color .15s, background .15s; min-width: 0; }
+.mac:hover { background: #2a2d33; }
+.mac.on { border-color: var(--text); }
+.mac.none { background: none; border: 1.5px dashed var(--chart4); cursor: default; }
+.mac .top { display: flex; align-items: center; justify-content: flex-start; gap: 7px; font-weight: 600; font-size: 14px; }
+.mac .top span { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mac .w { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; margin-top: 6px; }
+.mac .w small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 3px; }
+.mac .sub { color: var(--faint); font-size: 12.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fleetSum { color: var(--faint); font-size: 13px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--chart3); flex: none; }
 .dot.live { background: var(--accent); } .dot.wait { background: var(--warning); } .dot.off { background: var(--negative); }
 
@@ -212,6 +230,7 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
   .hosts { order: 0; flex: 0 0 auto; margin: 0 0 0 auto; }
   .hosts button { height: 32px; padding: 0 16px; }
   .title { padding: 22px 2px 18px; }
+  #fleetCard { grid-column: 1 / -1; }
   .title h1 { font-size: 30px; }
   #finding { font-size: 16px; }
   :root { --gap: 16px; }
@@ -228,10 +247,7 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
 <body>
 <header class="top">
   <div class="brand"><img src="icon.png" alt="">Vitals</div>
-  <nav class="seg hosts" id="hosts" aria-label="Mac">
-    <button data-h="here"><i class="dot"></i><span>This Mac</span></button>
-    <button data-h="peer"><i class="dot"></i><span>Other Mac</span></button>
-  </nav>
+  <nav class="seg hosts" id="hosts" aria-label="Mac"></nav>
   <div id="stamp">Connecting…</div>
 </header>
 
@@ -241,6 +257,10 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
 </section>
 
 <main>
+  <section class="card" id="fleetCard" hidden>
+    <div class="row"><h2>Your Macs</h2><span id="fleetSum"></span></div>
+    <div class="fleet" id="fleet"></div>
+  </section>
   <div class="col">
     <section class="card" id="asleep"><div class="moon"></div><h2 id="asleepTitle">Asleep</h2><p id="asleepNote"></p></section>
     <section class="card" id="powerCard">
@@ -314,14 +334,26 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch {
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const RANGES = ['10m', '1h', '24h', '14d'], LABELS = ['10 m', '1 h', '24 h', '14 d'];
 const CEILING = 95, CURVE = [50, 85];
-// "here" is the Mac serving this page; "peer" is the other one, read straight from its own address.
-const blank = base => ({ base, info: null, snap: null, live: [], state: 'idle', seen: 0, hist: {}, es: null });
-const st = { host: store.get('host', 'here'), range: +store.get('range', 1), here: blank(''), peer: blank(null),
+// "here" is the Mac serving this page; the peers are your other Macs, found through Tailscale (/fleet) and
+// read straight from their own addresses. `key` is a Mac's tailnet name ("here" for this one).
+const blank = (base, key) => ({ key, base, info: null, snap: null, live: [], state: 'idle', seen: 0, hist: {}, es: null });
+const st = { host: store.get('host', 'here'), range: +store.get('range', 1), here: blank('', 'here'), peers: [],
              pending: null, dragging: false, err: '' };
-if (!['here', 'peer'].includes(st.host)) st.host = 'here';
 if (!(st.range >= 0 && st.range <= 3)) st.range = 1;
-try { st.peer.info = JSON.parse(store.get('peerInfo', 'null')); } catch {}
-st.peer.seen = +store.get('peerSeen', 0) || 0;
+// What each Mac was last seen as, so a sleeping one still has a name and a "last seen".
+const fleetSeen = (() => { try { return JSON.parse(store.get('fleet', '{}')) || {}; } catch { return {}; } })();
+function remember(h) { if (h === st.here) return; fleetSeen[h.key] = { info: h.info, seen: h.seen, name: h.name }; store.set('fleet', JSON.stringify(fleetSeen)); }
+function peerFor(m) {
+  let p = st.peers.find(x => x.key === m.host);
+  if (!p) {
+    p = blank(m.url, m.host);
+    const c = fleetSeen[m.host]; if (c) { p.info = c.info; p.seen = c.seen || 0; p.vitals = true; }
+    st.peers.push(p);
+  }
+  p.base = m.url; p.name = m.name; p.online = m.online;
+  return p;
+}
+const isPeer = h => h !== st.here;
 
 // ---------- formatting (the app's Fmt) ----------
 const F = {
@@ -341,11 +373,13 @@ const F = {
   day: d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
 };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const shortName = h => h.info?.model?.split(' (')[0] || (h === st.here ? 'This Mac' : guessName(h.base));
+// Tailscale's name for it ("Mac mini", "MacBook"; tailnet names when two would read the same), else the model.
+const shortName = h => h.name || h.info?.model?.split(' (')[0] || (h === st.here ? 'This Mac' : guessName(h.base));
 /** Before the other Mac has ever answered: a name from its tailnet address, e.g. "MacBook" from shmulis-macbook-pro-2. */
 const guessName = url => { const n = (url || '').toLowerCase();
   return n.includes('macbook') ? 'MacBook' : n.includes('mini') ? 'Mac mini' : n.includes('studio') ? 'Mac Studio' : n.includes('imac') ? 'iMac' : 'Other Mac'; };
-const cur = () => st[st.host];
+const cur = () => st.host === 'here' ? st.here : st.peers.find(p => p.key === st.host) || st.here;
+const macs = () => [st.here, ...st.peers.filter(p => p.vitals)];
 const bootOf = s => s?.volumes?.find(v => v.boot) || s?.volumes?.[0];
 const now = () => Date.now() / 1000;
 
@@ -357,22 +391,22 @@ function took(h, s) {
   h.live.push({ t: s.t, w: s.wSystem, cpu: s.cpu, gpu: s.gpu, temp: s.tCPU, fan: s.fans[0]?.rpm,
                 mem: s.memUsed, swap: s.swapUsed, free: bootOf(s)?.free });
   while (h.live.length && s.t - h.live[0].t > 900) h.live.shift();
-  if (h === st.peer) store.set('peerSeen', String(s.t));
+  if (isPeer(h) && s.t - (fleetSeen[h.key]?.seen || 0) > 60) remember(h);
 }
 
 function open(h) {
   if (h.es || h.base == null) return;
   if (h.state !== 'live') h.state = 'wait';
   const es = h.es = new EventSource(h.base + 'events');
-  es.addEventListener('info', e => { h.info = JSON.parse(e.data); if (h === st.peer) store.set('peerInfo', e.data); render(); });
+  es.addEventListener('info', e => { h.info = JSON.parse(e.data); h.vitals = true; remember(h); render(); });
   es.onmessage = e => { took(h, JSON.parse(e.data)); render(); };
-  es.onerror = () => { if (now() - h.seen > 6) h.state = h === st.peer ? 'off' : 'wait'; render(); };
+  es.onerror = () => { if (now() - h.seen > 6) h.state = isPeer(h) ? 'off' : 'wait'; render(); };
 }
 function shut(h) { if (h.es) { h.es.close(); h.es = null; } if (h.state === 'live') h.state = 'idle'; }
 function connect() {
-  const other = st.host === 'here' ? st.peer : st.here;
-  shut(other);
-  if (document.hidden) shut(cur()); else open(cur());
+  const c = cur();
+  for (const h of [st.here, ...st.peers]) if (h !== c) shut(h);
+  if (document.hidden) shut(c); else open(c);
 }
 
 async function loadHistory(range = st.range) {
@@ -431,13 +465,13 @@ function render() {
   const s = away ? null : h.snap;
   document.body.classList.toggle('away', away);
 
-  for (const b of $('hosts').children) {
-    const k = b.dataset.h, x = st[k];
-    b.classList.toggle('on', k === st.host);
-    b.querySelector('.dot').className = 'dot ' + ({ live: 'live', up: 'live', wait: 'wait', off: 'off' }[x.state] || '');
-    b.querySelector('span').textContent = shortName(x);
-  }
-  $('hosts').style.display = st.peer.base ? '' : 'none';
+  // Green when streaming, or when its last minute came in (a Mac you just left stays green).
+  const all = macs(), dotOf = x => 'dot ' + (x.state === 'off' ? 'off' : x.state === 'wait' ? 'wait'
+    : x.state === 'live' || x.state === 'up' || x.sum ? 'live' : '');
+  const nav = all.map(x => `<button data-h="${esc(x.key)}" class="${x === h ? 'on' : ''}"><i class="${dotOf(x)}"></i><span>${esc(shortName(x))}</span></button>`).join('');
+  if (nav !== lastNav) { $('hosts').innerHTML = nav; lastNav = nav; }
+  $('hosts').style.display = all.length > 1 ? '' : 'none';
+  fleetCard(all, dotOf);
   $('stamp').textContent = h.state === 'live' && s ? 'Live · ' + F.clock(s.t, true) : away ? 'Asleep' : 'Connecting…';
   $('name').textContent = shortName(h);
   const i = h.info;
@@ -455,6 +489,31 @@ function render() {
   renderDetail();
   $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
 }
+
+let lastNav = '', lastFleet = '';
+/** One tile per Mac: live numbers for the one on screen, the last logged minute for the rest. */
+function fleetCard(all, dotOf) {
+  const none = st.peers.filter(p => p.vitals === false);
+  $('fleetCard').hidden = all.length + none.length < 2;
+  if ($('fleetCard').hidden) return;
+  let total = 0, counted = 0;
+  const tile = x => {
+    const live = x.snap && x.state === 'live', m = x.sum || {}, mem = x.info?.memory;
+    const w = live ? x.snap.wSystem : x.state === 'off' ? null : m.w, cpu = live ? x.snap.cpu : m.cpu, t = live ? x.snap.tCPU : m.temp;
+    const used = live ? x.snap.memUsed : m.mem;
+    if (w != null) { total += w; counted++; }
+    const sub = x.state === 'off' ? ['Asleep or off Tailscale', x.seen ? `Last seen ${ago(x.seen)}` : '']
+      : [[cpu != null && `CPU ${F.pct(cpu)}`, t != null && F.temp(t)].filter(Boolean).join(' · ') || '…',
+         used != null && mem ? `${F.gb(used, 0)} of ${F.gb(mem, 0)} GB used` : ''];
+    return `<button class="mac${x === cur() ? ' on' : ''}" data-h="${esc(x.key)}"><div class="top"><i class="${dotOf(x)}"></i><span>${esc(shortName(x))}</span></div>
+      <div class="w">${x.state === 'off' ? '—' : F.watts(w)}<small>W</small></div>${sub.map(l => `<div class="sub">${esc(l)}</div>`).join('')}</button>`;
+  };
+  const html = all.map(tile).join('') + none.map(p => `<div class="mac none"><div class="top"><span>${esc(shortName(p))}</span></div>
+      <div class="sub" style="white-space:normal;margin-top:6px">No Vitals here yet. Set up its dashboard and it joins this list.</div></div>`).join('');
+  if (html !== lastFleet) { $('fleet').innerHTML = html; lastFleet = html; }
+  $('fleetSum').textContent = `${all.length} Mac${all.length > 1 ? 's' : ''}` + (counted ? ` · ${F.wu(total)} together` : '');
+}
+$('fleet').addEventListener('click', e => { const b = e.target.closest('[data-h]'); if (b && b.dataset.h !== st.host) pick(b.dataset.h); });
 
 function power(h, s) {
   [...$('ranges').children].forEach((b, i) => b.classList.toggle('on', i === st.range));
@@ -674,7 +733,7 @@ function fanCard(h, s) {
   }
 
   let note;
-  if (h === st.peer) note = `Read-only here. Change these fans from ${shortName(h)}’s own page or the Vitals app.`;
+  if (isPeer(h)) note = `Read-only here. Change these fans from ${shortName(h)}’s own page or the Vitals app.`;
   else if (s && !s.root) note = 'Needs a one-time setup on this Mac: sudo ~/.vitals/vitals-agent setup-root';
   else if (mode === 'fixed') note = `Holds the speed you set; full speed above ${CEILING}°. Back to Auto when you close this page.`;
   else if (mode === 'curve') note = `Follows the CPU: minimum at ${policy[1] || CURVE[0]}°, full at ${policy[2] || CURVE[1]}°. Back to Auto when you close this page.`;
@@ -932,19 +991,19 @@ function appsError(msg) {
 }
 
 function renderApps() {
-  const card = $('appsCard'), peer = st.host === 'peer';
-  card.hidden = peer ? !st.peer.apps || st.peer.state === 'off' : !['on', 'denied'].includes(ap.state);
+  const card = $('appsCard'), P = cur(), peer = isPeer(P);
+  card.hidden = peer ? !P.apps || P.state === 'off' : !['on', 'denied'].includes(ap.state);
   if (card.hidden) return;
   const on = !peer && ap.state === 'on';
   $('openApp').hidden = $('appsMeta').hidden = !on;
   $('screenBtn').hidden = !on || !ap.screen;
-  $('appsTitle').textContent = peer ? `Apps on ${shortName(st.peer)}` : 'Apps';
+  $('appsTitle').textContent = peer ? `Apps on ${shortName(P)}` : 'Apps';
   $('appsErr').textContent = peer ? '' : ap.err;
   for (const b of $('appSort').children) b.classList.toggle('on', b.dataset.k === ap.sort);
   let html;
-  if (peer) html = `<p class="fine" style="margin-top:6px">Quit and open ${esc(shortName(st.peer))}’s apps from its own page.</p>
-    <a class="pillbtn" href="${esc(st.peer.base)}" rel="noopener">Open ${esc(shortName(st.peer))}’s page<i class="more">›</i></a>`
-    + (st.peer.screen ? ` <a class="pillbtn" href="${esc(st.peer.base)}screen/" rel="noopener">${esc(shortName(st.peer))}’s screen<i class="more">›</i></a>` : '');
+  if (peer) html = `<p class="fine" style="margin-top:6px">Quit and open ${esc(shortName(P))}’s apps from its own page.</p>
+    <a class="pillbtn" href="${esc(P.base)}" rel="noopener">Open ${esc(shortName(P))}’s page<i class="more">›</i></a>`
+    + (P.screen ? ` <a class="pillbtn" href="${esc(P.base)}screen/" rel="noopener">${esc(shortName(P))}’s screen<i class="more">›</i></a>` : '');
   else if (ap.state === 'denied') html = `<p class="empty">${esc(ap.denied)}</p>`;
   else {
     const list = [...ap.list].sort((a, b) => b[ap.sort] - a[ap.sort]);
@@ -1041,26 +1100,47 @@ setInterval(() => { if (!document.hidden) loadHistory(); if (ap.state !== 'on') 
 setInterval(() => { if (ap.state === 'on') loadApps(); }, 3000);
 setInterval(() => {         // a stream that went quiet: the Mac fell asleep or left the tailnet
   const h = cur();
-  if (h === st.peer && h.state === 'live' && now() - h.seen > 8) { h.state = 'off'; render(); }
+  if (isPeer(h) && h.state === 'live' && now() - h.seen > 8) { h.state = 'off'; render(); }
 }, 2000);
 setInterval(() => {         // a fan off Auto stays there only while this page keeps checking in
   if (!document.hidden && st.host === 'here' && (st.here.snap?.fanPolicy || 'auto') !== 'auto')
     fetch('alive', { method: 'POST', headers: { 'X-Vitals': '1' } }).catch(() => {});
 }, 20000);
 
-// The other Mac's name and whether it is awake, without starting its sampling.
-async function probePeer() {
-  if (!st.peer.base) return;
+// The fleet: your Macs from Tailscale, then each one's last minute (/summary), without starting any
+// sampling. Every minute while the page is open; a Mac that never answers is shown as not set up.
+let legacyPeer = null;
+async function probe(h) {
   try {
-    const c = await fetch(st.peer.base + 'config', { cache: 'no-store' }).then(r => r.json());
-    st.peer.info = c.info; st.peer.apps = !!c.apps; st.peer.screen = !!c.screen; store.set('peerInfo', JSON.stringify(c.info));
-    if (st.peer.state !== 'live') st.peer.state = 'up';
-  } catch { if (st.peer.state !== 'live') st.peer.state = 'off'; }
-  render();
+    const r = await fetch(h.base + 'summary', { cache: 'no-store' });
+    if (!r.ok) throw 0;
+    const m = await r.json();
+    h.sum = m; h.info = m.info; h.apps = !!m.apps; h.screen = !!m.screen; h.vitals = true;
+    if (h.state !== 'live') h.state = 'up';
+    if (!h.seen && m.t) h.seen = m.t;
+    remember(h);
+  } catch {
+    if (h === st.here) return;
+    if (h.state !== 'live') h.state = 'off';
+    if (h.vitals === undefined) h.vitals = h.online === false ? undefined : false;   // reachable, but no Vitals
+  }
 }
+async function probeFleet() {
+  try {
+    const f = await fetch('fleet', { cache: 'no-store' }).then(r => r.json());
+    for (const m of f.members) { if (m.me) st.here.name = m.name; else peerFor(m); }
+  } catch {}
+  if (legacyPeer && !st.peers.some(p => p.base === legacyPeer)) {
+    const host = new URL(legacyPeer).host;
+    peerFor({ host, url: legacyPeer, name: fleetSeen[host]?.name || guessName(legacyPeer), online: true });
+  }
+  await Promise.all([st.here, ...st.peers].map(probe));
+  connect(); render();
+}
+setInterval(() => { if (!document.hidden) probeFleet(); }, 60000);
 
-fetch('config', { cache: 'no-store' }).then(r => r.json()).then(c => { st.peer.base = c.peer || null; st.here.info = c.info; })
-  .catch(() => {}).finally(() => { if (!st.peer.base) st.host = 'here'; connect(); loadHistory(); loadApps(); probePeer(); render(); });
+fetch('config', { cache: 'no-store' }).then(r => r.json()).then(c => { legacyPeer = c.peer || null; st.here.info = c.info; })
+  .catch(() => {}).finally(() => { connect(); loadHistory(); loadApps(); probeFleet(); render(); });
 render();
 </script>
 </body>
