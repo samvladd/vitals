@@ -27,6 +27,10 @@ subscription or a cloud account.
 | Quit, force quit and open any app on a Mac, from your phone | Off until you name the devices allowed |
 | **One-tap actions**: commands you saved on a Mac ("Restart Ollama"), run from your phone with their output | Nothing: the page can only run what the Mac already has |
 | **The Mac's screen on your phone**: see it and use it, with trackpad gestures, a magnifier, a keyboard with ⌘ ⌥ ⌃ ⇧, sideways | A 57 KB viewer, ~1 MB on the Mac while connected, nothing after |
+| **Wake a sleeping Mac** from your phone, through another Mac on the same network | A tap; off until app control is on |
+| **What did my Mac do?** Each day hour by hour: the busy apps, hot stretches, sleep and restarts | Under 0.01% of one core for the logger |
+| **Energy and cost**: kWh, cost and CO₂ for today, this month and the year, per Mac and for the fleet | Read from the log the Mac already keeps |
+| **Battery care** on a MacBook: health, cycles, drain, history, and a charge limit (macOS's own, 80–100%) | Nothing to install on Macs that have macOS's limit |
 | No App Store, no developer account, no cloud service, no port open to the internet | Your own [Tailscale](https://tailscale.com) network |
 
 What you can do with it:
