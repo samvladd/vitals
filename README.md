@@ -138,6 +138,39 @@ Safety:
 Quit other fan apps (Macs Fan Control, Stats' fan module) first, or they will fight over the fans.
 Fan control talks to the SMC directly, as those apps do; use it at your own risk.
 
+## Battery care (MacBooks)
+
+A **Battery** card on a MacBook's dashboard (hidden on desktops): charge, health (what a full charge
+holds now against new, in mAh), cycles against the rated count, temperature, charging or draining
+watts, time to full or empty, the adapter's watts, and a 1 h / 24 h / 14 d history of the charge,
+logged each minute. `vitals-agent battery` prints the same in Terminal.
+
+**Charge limit** (stop charging at, say, 80%): off until you set one, in the card or with
+`vitals-agent battery limit 80` (`limit off` to stop). Vitals uses one of two ways, whichever the Mac has:
+
+| | macOS's own charge limit | SMC switch, older firmware |
+| --- | --- | --- |
+| Needs | macOS 26.4 or later on Apple silicon | firmware with `CHTE` or `CH0B`/`CH0C` (`vitals-agent battery keys`) |
+| Limits | 80 to 100% | 50 to 100% |
+| Holds while asleep, restarting, Vitals closed | Yes: the firmware enforces it | No: only while awake; it charges normally while asleep |
+| Setup | none, no password | once: `sudo vitals-agent battery install` |
+
+macOS's own limit is the same setting as System Settings › Battery › Charging; Vitals sets it through
+PowerUI, the private framework behind that screen, and reads it back. Firmware that came with macOS 27
+(20457.0.125 and later, also shipped in some 15.x and 26.x updates) removed or locked the SMC switches
+that `battery` and AlDente used, so on those Macs macOS's own limit is the only way.
+
+The SMC way runs a small root daemon (`com.vitals.battery`, from the root-owned copy of the agent). It
+reads only one number, the limit, from a file you own; there is no new sudo rule. Its rules:
+
+- Charging goes back on whenever it stops, is unloaded or crashes (and again when launchd restarts
+  it), before the Mac sleeps, when you unplug, and below 20%.
+- Every write is read back. If the value doesn't stick, or the battery is still charging two minutes
+  after the switch says stop, it turns charging back on and stops trying until you set a limit again.
+- A value it never writes (another battery app) is left alone, not fought over.
+- `vitals-agent battery limit off` turns it off within 15 s; `sudo vitals-agent battery uninstall`
+  (or `remove-root`) removes it and turns charging back on. A restart always clears the SMC switch.
+
 ## On your iPhone
 
 <img src="docs/iphone.png" width="300" align="right" alt="The phone dashboard: Mac mini at 5.4 W, a one-hour power chart, CPU and memory">

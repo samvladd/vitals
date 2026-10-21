@@ -23,6 +23,13 @@ struct Battery: Codable, Equatable {
     var health: Double?           // % of design capacity
     var minutesLeft: Int?
     var temp: Double?
+    // Battery care (Core/Battery.swift); optional so older agents and apps still decode.
+    var designMah: Int? = nil     // what it held when new
+    var fullMah: Int? = nil       // what a full charge holds now
+    var designCycles: Int? = nil  // the cycles it is rated for
+    var minutesToFull: Int? = nil
+    var minutesToEmpty: Int? = nil
+    var held: Bool? = nil         // on power, not charging, not full: a charge limit or Optimized Charging holds it
 }
 
 struct Volume: Codable, Equatable {
