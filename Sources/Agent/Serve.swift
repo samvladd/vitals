@@ -259,7 +259,8 @@ final class WebServer {
             send(c, 200, "text/html; charset=utf-8", WebAssets.page, cache: "no-cache")
         case ("GET", "/manifest.webmanifest"): send(c, 200, "application/manifest+json", Data(Self.manifest.utf8), cache: "max-age=604800")
         case ("GET", "/icon.png"), ("GET", "/apple-touch-icon.png"): send(c, 200, "image/png", WebAssets.icon, cache: "max-age=604800")
-        case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info)}")
+        // "apps" lets the other Mac's page point to this one's Apps card; it says only whether it is on.
+        case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info),\"apps\":\(Control.load() != nil)}")
         case ("GET", "/events"): watch(c)
         case ("GET", "/history"): history(r, c)
         case ("GET", "/ssd"):
@@ -355,7 +356,7 @@ final class WebServer {
             let from = r.headers["x-forwarded-for"] ?? "this Mac", key = from + why
             if refusals[key].map({ Date().timeIntervalSince($0) > 600 }) ?? true {
                 refusals[key] = Date()
-                Control.record("\(r.method) \(r.path) from \(from) (\(r.headers["tailscale-user-login"] ?? "no account")): \(why)", "refused")
+                Control.record("Blocked a request from \(from) (\(r.headers["tailscale-user-login"] ?? "no account")): \(why)", "refused")
             }
             return send(c, 403, json: json(["error": "This device isn't allowed to control apps on this Mac."]))
         case .allowed(let d): device = d

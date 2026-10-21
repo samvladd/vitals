@@ -143,6 +143,7 @@ and which processes hold it, every temperature sensor. Storage adds:
 | While a page is open (Mac mini, M4 Pro) | CPU | Memory |
 | --- | --- | --- |
 | `vitals-agent serve` | ~2% of one core | ~6.5 MB |
+| …with the Apps card open (refreshes every 3 s) | +~0.5% of one core | +~0.1 MB |
 | Nobody looking | — | no process |
 
 <br clear="right">
@@ -150,8 +151,8 @@ and which processes hold it, every temperature sensor. Storage adds:
 ## Quit and open apps from your phone
 
 The dashboard can also list a Mac's apps (one row per app, with the memory and CPU of the app and
-all its helpers) and quit them, force quit them, or open one from Applications. It is **off** until
-you turn it on, on that Mac, naming the devices that may use it:
+all its helpers, sorted by either) and quit them, force quit them, or open one from Applications. It
+is **off** until you turn it on, on that Mac, naming the devices that may use it:
 
 ```bash
 vitals-agent control on --from my-iphone,my-macbook
@@ -160,6 +161,9 @@ vitals-agent control on --from my-iphone,my-macbook
 The names are the first part of each device's Tailscale address (`tailscale status` lists them; run
 the command without `--from` to see yours). `vitals-agent control` shows what is allowed and the
 latest actions; `vitals-agent control off` turns it off again at once.
+
+The Apps card is on that Mac's own page. On the other Mac's page, its tab shows a link there instead:
+one Mac's page never controls the other.
 
 Who can do it. Every request has to pass all of these, checked by the agent on each call:
 
@@ -177,7 +181,8 @@ can't lock yourself out. Quit takes two taps; Force quit is offered only when an
 after 8 seconds (usually a "Save changes?" dialog nobody can see on a headless Mac).
 
 Every action, and every refused request, goes to
-`~/Library/Application Support/Vitals/control.log`, and the last few show at the bottom of the card.
+`~/Library/Application Support/Vitals/control.log`, and the last few show at the bottom of the card
+("Quit Safari from iPhone", or in orange, "Blocked a request from …").
 
 The Mac has to be logged in (it is, if the dashboard works), and no macOS permission prompt is
 involved. Anyone who can already run programs as you on that Mac could quit your apps anyway, so the

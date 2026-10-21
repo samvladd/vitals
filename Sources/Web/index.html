@@ -33,6 +33,7 @@ body {
   padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   max-width: 560px; margin: 0 auto;
 }
+[hidden] { display: none !important; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; -webkit-user-select: none; user-select: none; }
 button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
@@ -183,10 +184,15 @@ html.locked { overflow: hidden; }
 .pillbtn.ask:hover { background: var(--negative); }
 #appsErr, #pErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
 #appsErr:empty, #pErr:empty { display: none; }
+.apps-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px; }
+#appsSum { color: var(--faint); font-size: 13px; }
 .recent { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-.recent div { color: var(--faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recent div + div { margin-top: 3px; }
-.recent .bad { color: var(--warning); }
+.recent h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+.ev { display: grid; grid-template-columns: 1fr auto; gap: 12px; color: var(--faint); font-size: 13px; }
+.ev + .ev { margin-top: 5px; }
+.ev span:last-child { white-space: nowrap; }
+.ev.bad span:first-child { color: var(--warning); }
+a.pillbtn { display: inline-block; color: var(--text); text-decoration: none; margin-top: 12px; }
 input[type=search] { width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px; }
 input[type=search]:focus { outline: 2px solid var(--chart3); }
 .cores.tall { height: 84px; gap: 3px; margin-top: 12px; }
@@ -269,10 +275,11 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
       <div id="procs"></div>
     </section>
     <section class="card" id="appsCard" hidden>
-      <div class="row"><h2>Apps</h2><button class="pillbtn" id="openApp">Open…</button></div>
+      <div class="row"><h2 id="appsTitle">Apps</h2><button class="pillbtn" id="openApp">Open…</button></div>
+      <div class="apps-meta" id="appsMeta"><span id="appsSum"></span>
+        <div class="tabs" id="appSort" aria-label="Sort apps by"><button data-k="mem">Memory</button><button data-k="cpu">CPU</button></div></div>
+      <p id="appsErr" role="alert"></p>
       <div id="apps"></div>
-      <p id="appsErr"></p>
-      <div id="appsMore"></div>
     </section>
   </div>
 </main>
@@ -897,8 +904,10 @@ function ssdCard(h) {
 
 // ---------- apps: list, quit and open ----------
 // Only on this Mac's own page, and only from the devices `vitals-agent control on` named; the Mac
-// checks that on every request. 'off' hides the card; 'denied' says why.
-const ap = { state: 'unknown', list: [], recent: [], err: '', ask: null, quitting: {}, all: false, installed: null, opening: null };
+// checks that on every request. 'off' hides the card; 'denied' says why. On the other Mac's tab the
+// card only points to that Mac's own page: this page never holds the keys to it.
+const ap = { state: 'unknown', list: [], recent: [], err: '', ask: null, quitting: {}, all: false, installed: null, opening: null,
+             sort: store.get('appSort', 'mem') === 'cpu' ? 'cpu' : 'mem' };
 
 async function loadApps() {
   if (st.host !== 'here' || document.hidden) return;
@@ -915,21 +924,34 @@ async function loadApps() {
   renderApps();
 }
 
-let lastApps = '';
+let lastApps = '', errTimer = 0;
+function appsError(msg) {
+  ap.err = msg; renderApps();
+  clearTimeout(errTimer); errTimer = setTimeout(() => { ap.err = ''; renderApps(); }, 6000);
+}
+
 function renderApps() {
-  const card = $('appsCard');
-  card.hidden = st.host !== 'here' || !['on', 'denied'].includes(ap.state);
+  const card = $('appsCard'), peer = st.host === 'peer';
+  card.hidden = peer ? !st.peer.apps || st.peer.state === 'off' : !['on', 'denied'].includes(ap.state);
   if (card.hidden) return;
-  $('openApp').hidden = ap.state !== 'on';
-  $('appsErr').textContent = ap.err;
+  const on = !peer && ap.state === 'on';
+  $('openApp').hidden = $('appsMeta').hidden = !on;
+  $('appsTitle').textContent = peer ? `Apps on ${shortName(st.peer)}` : 'Apps';
+  $('appsErr').textContent = peer ? '' : ap.err;
+  for (const b of $('appSort').children) b.classList.toggle('on', b.dataset.k === ap.sort);
   let html;
-  if (ap.state === 'denied') html = `<p class="empty">${esc(ap.denied)}</p>`;
+  if (peer) html = `<p class="fine" style="margin-top:6px">Quit and open ${esc(shortName(st.peer))}’s apps from its own page.</p>
+    <a class="pillbtn" href="${esc(st.peer.base)}" rel="noopener">Open ${esc(shortName(st.peer))}’s page<i class="more">›</i></a>`;
+  else if (ap.state === 'denied') html = `<p class="empty">${esc(ap.denied)}</p>`;
   else {
-    const shown = ap.all ? ap.list : ap.list.slice(0, 8);
+    const list = [...ap.list].sort((a, b) => b[ap.sort] - a[ap.sort]);
+    const shown = ap.all ? list : list.slice(0, 8);
+    const total = ap.list.reduce((t, a) => t + a.mem, 0);
+    $('appsSum').textContent = `${ap.list.length} open · ${F.mem(total)}`;
     html = shown.map(appRow).join('') || '<p class="empty">No apps open.</p>';
-    if (ap.list.length > 8) html += `<button class="link" data-act="all" style="margin-top:10px">${ap.all ? 'Show fewer' : `Show all ${ap.list.length}`}</button>`;
-    if (ap.recent.length) html += `<div class="recent">${ap.recent.slice(0, 3).map(e =>
-      `<div class="${e.kind === 'done' ? '' : 'bad'}">${ago(e.t).replace(/^./, c => c.toUpperCase())} · ${e.kind === 'refused' ? 'Refused: ' : ''}${esc(e.text)}</div>`).join('')}</div>`;
+    if (list.length > 8) html += `<button class="link" data-act="all" style="margin-top:10px">${ap.all ? 'Show fewer' : `Show all ${list.length}`}<i class="more">›</i></button>`;
+    if (ap.recent.length) html += `<div class="recent"><h3>Recent activity</h3>${ap.recent.slice(0, 3).map(e =>
+      `<div class="ev${e.kind === 'done' ? '' : ' bad'}"><span>${esc(e.text)}</span><span>${ago(e.t)}</span></div>`).join('')}</div>`;
   }
   if (html !== lastApps) { $('apps').innerHTML = html; lastApps = html; }   // unchanged HTML keeps a tap in flight intact
 }
@@ -937,24 +959,25 @@ function renderApps() {
 function appRow(a) {
   const q = ap.quitting[a.id], stuck = q && Date.now() - q.at > 8000;
   const ask = kind => ap.ask === `${kind}:${a.id}`;
-  const btn = (kind, label) => `<button class="pillbtn${ask(kind) ? ' ask' : ''}" data-act="${kind}" data-id="${esc(a.id)}">${ask(kind) ? label + '?' : label}</button>`;
-  const right = a.locked ? '<span class="sub">Keeps this page reachable</span>'
+  const btn = (kind, label) => `<button class="pillbtn${ask(kind) ? ' ask' : ''}" data-act="${kind}" data-id="${esc(a.id)}"
+    aria-label="${ask(kind) ? `Tap again to ${label.toLowerCase()} ${esc(a.name)}` : `${label} ${esc(a.name)}`}">${ask(kind) ? label + '?' : label}</button>`;
+  const right = a.locked ? '<span class="sub">Protected</span>'
     : stuck ? btn('force', 'Force quit') : q ? `<span class="sub">${q.force ? 'Force quitting…' : 'Quitting…'}</span>` : btn('quit', 'Quit');
-  const sub = stuck ? 'Still open: it may be asking to save'
+  const sub = stuck ? 'Still open: it may be asking to save' : a.locked ? 'Keeps this page reachable'
     : `${F.mem(a.mem)} · ${a.cpu.toFixed(1)}% CPU${a.copies > 1 ? ` · ${a.copies} copies` : ''}${a.hidden ? ' · hidden' : ''}`;
   return `<div class="app"><img src="apps/icon?id=${encodeURIComponent(a.id)}" alt="" loading="lazy">
     <div style="min-width:0"><div class="nm">${esc(a.name)}</div><div class="sub"${stuck ? ' style="color:var(--warning)"' : ''}>${sub}</div></div>${right}</div>`;
 }
 
 async function quitApp(a, force) {
-  ap.ask = null; ap.err = '';
+  ap.ask = null;
   ap.quitting[a.id] = { at: Date.now(), force };
   renderApps();
   try {
     const r = await fetch('apps/quit', { method: 'POST', headers: { 'X-Vitals': '1' }, body: `${force ? 'force' : 'quit'} ${a.id}` });
-    if (!r.ok) { ap.err = (await r.json().catch(() => ({}))).error || 'The Mac refused.'; delete ap.quitting[a.id]; }
-  } catch { ap.err = 'The Mac did not answer.'; delete ap.quitting[a.id]; }
-  loadApps();
+    if (!r.ok) { delete ap.quitting[a.id]; appsError((await r.json().catch(() => ({}))).error || 'The Mac refused.'); }
+  } catch { delete ap.quitting[a.id]; appsError('The Mac did not answer.'); }
+  loadApps(); setTimeout(loadApps, 1200);     // most apps are gone within a second
 }
 
 let askTimer = 0;
@@ -969,6 +992,11 @@ $('apps').addEventListener('click', e => {
   ap.ask = key; renderApps();
   clearTimeout(askTimer);
   askTimer = setTimeout(() => { ap.ask = null; renderApps(); }, 4000);
+});
+$('appSort').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  ap.sort = b.dataset.k; store.set('appSort', ap.sort); renderApps();
 });
 
 $('openApp').addEventListener('click', async () => {
@@ -986,7 +1014,7 @@ function renderPicker() {
   const q = $('pSearch').value.trim().toLowerCase(), running = new Set(ap.list.map(a => a.id));
   const list = ap.installed.filter(a => !q || a.name.toLowerCase().includes(q));
   $('pList').innerHTML = list.map(a => `<button class="app" data-id="${esc(a.id)}"><img src="apps/icon?id=${encodeURIComponent(a.id)}" alt="" loading="lazy">
-    <span class="nm">${esc(a.name)}</span><span class="sub">${ap.opening === a.id ? 'Opening…' : running.has(a.id) ? 'Open' : ''}</span></button>`).join('')
+    <span class="nm">${esc(a.name)}</span><span class="sub">${ap.opening === a.id ? 'Opening…' : running.has(a.id) ? 'Running' : ''}</span></button>`).join('')
     || '<p class="empty">No apps match.</p>';
 }
 $('pSearch').addEventListener('input', renderPicker);
@@ -998,7 +1026,7 @@ $('pList').addEventListener('click', async e => {
   ap.opening = b.dataset.id; $('pErr').textContent = ''; renderPicker();
   try {
     const r = await fetch('apps/open', { method: 'POST', headers: { 'X-Vitals': '1' }, body: ap.opening });
-    if (r.ok) { $('picker').close(); loadApps(); }
+    if (r.ok) { $('picker').close(); loadApps(); setTimeout(loadApps, 1500); }
     else $('pErr').textContent = (await r.json().catch(() => ({}))).error || 'The Mac refused.';
   } catch { $('pErr').textContent = 'The Mac did not answer.'; }
   ap.opening = null; renderPicker();
@@ -1019,12 +1047,12 @@ setInterval(() => {         // a fan off Auto stays there only while this page k
 
 // The other Mac's name and whether it is awake, without starting its sampling.
 async function probePeer() {
-  if (!st.peer.base || st.peer.es) return;
+  if (!st.peer.base) return;
   try {
     const c = await fetch(st.peer.base + 'config', { cache: 'no-store' }).then(r => r.json());
-    st.peer.info = c.info; store.set('peerInfo', JSON.stringify(c.info));
+    st.peer.info = c.info; st.peer.apps = !!c.apps; store.set('peerInfo', JSON.stringify(c.info));
     if (st.peer.state !== 'live') st.peer.state = 'up';
-  } catch { st.peer.state = 'off'; }
+  } catch { if (st.peer.state !== 'live') st.peer.state = 'off'; }
   render();
 }
 

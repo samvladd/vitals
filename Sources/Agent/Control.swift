@@ -112,7 +112,7 @@ enum Control {
                                                   bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-        NSWorkspace.shared.icon(forFile: url.path).draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
+        NSWorkspace.shared.icon(forFile: url.resolvingSymlinksInPath().path).draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
         NSGraphicsContext.restoreGraphicsState()
         let png = rep.representation(using: .png, properties: [:])
         icons[id] = png
@@ -161,6 +161,7 @@ struct AppRow: Encodable {
 final class AppMeter {
     private var prev: [pid_t: UInt64] = [:]
     private var prevTime: UInt64 = 0
+    private var paths: [pid_t: String] = [:]     // a process's executable doesn't change; looked up once
     private let timebase: Double = { var t = mach_timebase_info(); mach_timebase_info(&t); return Double(t.numer) / Double(t.denom) }()
 
     /// The apps in the Dock, one row per bundle ID, largest first. A process counts toward the app whose
@@ -177,10 +178,11 @@ final class AppMeter {
         let n = proc_listallpids(nil, 0)
         var pids = [pid_t](repeating: 0, count: Int(max(n, 0)) + 32)
         let got = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size)))
-        var path = [CChar](repeating: 0, count: 4096)
+        var path = [CChar](repeating: 0, count: 4096), known: [pid_t: String] = [:]
         for pid in pids.prefix(max(got, 0)) where pid > 0 {
-            guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { continue }
-            let p = String(cString: path)
+            if paths[pid] == nil { paths[pid] = proc_pidpath(pid, &path, UInt32(path.count)) > 0 ? String(cString: path) : "" }
+            let p = paths[pid]!
+            known[pid] = p
             guard let owner = roots.first(where: { p.hasPrefix($0.0) })?.1 else { continue }
             var ti = proc_taskinfo()
             let size = Int32(MemoryLayout<proc_taskinfo>.size)
@@ -192,7 +194,7 @@ final class AppMeter {
             let ok = withUnsafeMutablePointer(to: &ru) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) } }
             mem[owner, default: 0] += ok == 0 ? Double(ru.ri_phys_footprint) : Double(ti.pti_resident_size)
         }
-        prev = next; prevTime = now
+        prev = next; prevTime = now; paths = known
         return ids.map { id in
             let copies = apps.filter { $0.bundleIdentifier == id }
             return AppRow(id: id, name: copies[0].localizedName ?? id, copies: copies.count, cpu: cpu[id] ?? 0, mem: mem[id] ?? 0,
@@ -219,7 +221,7 @@ func controlCommand() {
             guard let node = t.nodes.first(where: { $0.name == n }) else { fail("No device called \(n) on your tailnet. Yours: \(mine.map(\.name).joined(separator: ", "))") }
             guard node.user == t.me.user else { fail("\(n) belongs to another Tailscale account; only your own devices can be allowed.") }
             guard node.tags.isEmpty else { fail("\(n) is a tagged device, so Tailscale doesn't say who is using it; it can't be allowed.") }
-            for ip in node.ips { devices[ip] = node.name }
+            for ip in node.ips { devices[ip] = friendlyName(node, among: mine) }
         }
         let c = Control.Config(login: t.login, host: t.me.dns, devices: devices)
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
@@ -228,8 +230,9 @@ func controlCommand() {
             fail("Could not write \(Control.file.path)")
         }
         chmod(Control.file.path, 0o600)
-        Control.record("Turned on for \(names.joined(separator: ", "))")
-        print("App control is on for \(t.me.dns), from \(names.joined(separator: ", ")) (account \(t.login)).\nTurn it off: vitals-agent control off")
+        let allowed = Set(devices.values).sorted().joined(separator: ", ")
+        Control.record("Turned on for \(allowed)")
+        print("App control is on for \(t.me.dns), from \(allowed) (account \(t.login)).\nTurn it off: vitals-agent control off")
     case "off":
         try? FileManager.default.removeItem(at: Control.file)
         Control.record("Turned off")
@@ -246,7 +249,20 @@ func controlCommand() {
 let tailscaleCLI = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
     .first { FileManager.default.isExecutableFile(atPath: $0) }
 
-struct TailnetNode { var name: String, dns: String, user: Int, ips: [String], tags: [String] }
+struct TailnetNode { var name: String, dns: String, host: String, os: String, user: Int, ips: [String], tags: [String] }
+
+/// "iPhone" or "MacBook" rather than iphone182 or shmulis-macbook-pro-2, for the log and the page.
+/// Falls back to the tailnet name when two of your devices would read the same.
+func friendlyName(_ n: TailnetNode, among all: [TailnetNode]) -> String {
+    func guess(_ n: TailnetNode) -> String {
+        let k = n.name
+        if n.os == "iOS" { return k.contains("ipad") ? "iPad" : "iPhone" }
+        for (key, name) in [("macbook", "MacBook"), ("mini", "Mac mini"), ("studio", "Mac Studio"), ("imac", "iMac")] where k.contains(key) { return name }
+        return n.host.isEmpty || n.host == "localhost" ? k : n.host
+    }
+    let g = guess(n)
+    return all.filter { guess($0) == g }.count > 1 ? n.name : g
+}
 
 /// This Mac, its account and the devices it can see, from `tailscale status --json`.
 func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
@@ -261,7 +277,8 @@ func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
     func node(_ d: [String: Any]) -> TailnetNode? {
         guard let dns = (d["DNSName"] as? String)?.lowercased(), !dns.isEmpty else { return nil }
         let host = dns.hasSuffix(".") ? String(dns.dropLast()) : dns
-        return TailnetNode(name: String(host.split(separator: ".").first ?? ""), dns: host, user: (d["UserID"] as? NSNumber)?.intValue ?? -1,
+        return TailnetNode(name: String(host.split(separator: ".").first ?? ""), dns: host, host: d["HostName"] as? String ?? "",
+                           os: d["OS"] as? String ?? "", user: (d["UserID"] as? NSNumber)?.intValue ?? -1,
                            ips: d["TailscaleIPs"] as? [String] ?? [], tags: d["Tags"] as? [String] ?? [])
     }
     guard let self_ = node(me), let users = j["User"] as? [String: [String: Any]],
