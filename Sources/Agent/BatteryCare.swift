@@ -121,7 +121,7 @@ enum BatteryCare {
                     // control on, only from the devices named for it).
                     let words = r.body.split(whereSeparator: \.isWhitespace).map(String.init)
                     let limit: Int?? = words.count == 2 && words[0] == "limit" ? (words[1] == "off" ? .some(nil) : Int(words[1]).map { .some($0) }) : nil
-                    if !mayChange(r) { code = 403; message = "Only this Mac's own page can change its charge limit." }
+                    if !mayChange(r) { code = 403; message = "Changing the limit from a page needs app control on for this device (vitals-agent control on --from …), or run vitals-agent battery limit 80 on the Mac." }
                     else if let limit { let res = setLimit(limit); code = res.ok ? 200 : 409; message = res.message }
                     else { code = 400; message = "limit N | limit off" }
                 }
@@ -133,16 +133,11 @@ enum BatteryCare {
         }
     }
 
+    /// Changing the limit is held to the same rule as every other change from a page (apps, screen,
+    /// actions, wake): app control on, from a named device, on this Mac's own page. With app control
+    /// off the page only shows the limit; `vitals-agent battery limit N` on the Mac still sets it.
     static func mayChange(_ r: Request) -> Bool {
-        if Control.load() != nil {
-            if case .allowed = Control.gate(r, change: r.method == "POST") { return true }
-            return false
-        }
-        let host = (r.headers["host"] ?? "").split(separator: ":").first.map { $0.lowercased() } ?? ""
-        if r.method == "POST" {
-            guard let o = r.headers["origin"], URL(string: o)?.host?.lowercased() == host else { return false }
-        }
-        if let site = r.headers["sec-fetch-site"], site != "same-origin", site != "none" { return false }
+        guard Control.load() != nil, case .allowed = Control.gate(r, change: true) else { return false }
         return true
     }
 

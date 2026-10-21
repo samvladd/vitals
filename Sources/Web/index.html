@@ -1226,7 +1226,7 @@ function limitCard(h, b) {
     notes.push(`Held through the SMC (${esc(bc.smcKey)}) by a small root daemon while the Mac is awake. Charging comes back on when it stops, before sleep, and below 20%.`);
   }
   if (peer) notes.unshift(`Read-only here. Change it from ${esc(shortName(h))}’s own page.`);
-  else if (!bc.canChange) notes.unshift('Only this Mac’s own page can change it.');
+  else if (!bc.canChange) notes.unshift(peer ? 'Change it from that Mac’s own page.' : 'To change it here, turn on app control for this device; or run vitals-agent battery limit 80 on the Mac.');
   if (bc.dryRun) notes.push('Test mode: nothing on the Mac is changed.');
   return card('Charge limit', seg + `<p id="bErr" role="alert">${esc(h.bcErr || '')}</p>`
     + notes.map(n => `<p class="fine">${n}</p>`).join(''), lim ? pill(`${lim}%`) : pill('Off'));
