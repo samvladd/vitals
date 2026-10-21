@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vitals</title>
+<meta name="theme-color" content="#0c0d0f">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Vitals">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon.png">
+<style>
+/* The menu bar app's tokens (Sources/App/Theme.swift): true-black flat, depth is a lightness step,
+   colour lives on data only. */
+:root {
+  --ground: #0c0d0f; --surface: #15171a; --raised: #24272c; --line: #202328; --grid: #23262b;
+  --text: #fff; --muted: #b4b4b4; --faint: #8f9296;
+  --accent: #c6f24e; --warning: #e5a93b; --negative: #e5566f;
+  --chart2: #e6e6e6; --chart3: #6b6b6b; --chart4: #34383e;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: var(--ground); -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--ground); color: var(--text);
+  font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none;
+  touch-action: manipulation; overscroll-behavior-y: none;
+  padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  max-width: 560px; margin: 0 auto;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.top { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 17px; }
+.brand img { width: 26px; height: 26px; border-radius: 7px; }
+#stamp { color: var(--faint); font-size: 13px; }
+
+.seg { display: flex; background: var(--raised); border-radius: 999px; padding: 2px; }
+.seg button { flex: 1; height: 32px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--muted); white-space: nowrap; padding: 0 10px; }
+.seg button.on { background: var(--text); color: var(--ground); }
+.seg button:disabled { color: var(--chart3); cursor: default; }
+.seg button.on:disabled { background: var(--chart3); color: var(--ground); }
+.hosts button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 36px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
+.dot.live { background: var(--accent); } .dot.off { background: var(--negative); }
+
+.title { padding: 18px 2px 14px; }
+.title h1 { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+#spec { color: var(--faint); font-size: 13px; margin-top: 2px; }
+#finding { font-size: 15px; margin-top: 8px; color: var(--muted); }
+
+.card { background: var(--surface); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h2 { font-size: 15px; font-weight: 600; }
+.tabs { display: flex; gap: 14px; }
+.tabs button { font-size: 14px; color: var(--faint); padding: 4px 0; border-bottom: 1.5px solid transparent; }
+.tabs button.on { color: var(--text); font-weight: 600; border-color: var(--text); }
+
+.big { font-size: 40px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
+.big small { font-size: 17px; font-weight: 400; color: var(--muted); margin-left: 4px; letter-spacing: 0; }
+.stats { text-align: right; font-size: 14px; color: var(--muted); }
+.stats b { color: var(--text); font-weight: 600; margin-left: 8px; }
+.stats div + div { margin-top: 4px; }
+#battery { color: var(--muted); font-size: 13px; margin-top: 8px; }
+#battery:empty { display: none; }
+#chart { display: block; width: 100%; height: 170px; margin: 14px 0 12px; touch-action: pan-y; }
+
+.bar { position: relative; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: flex; }
+.bar i { display: block; height: 100%; }
+.legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 22px; margin-top: 12px; font-size: 14px; }
+.legend div { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.legend b { margin-left: auto; color: var(--text); font-weight: 600; }
+.sw { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+
+.grid { display: grid; grid-template-columns: 1fr 1fr; padding: 0; }
+.cell { padding: 14px; min-height: 132px; min-width: 0; border-bottom: 1px solid var(--line); }
+.cell:nth-child(odd) { border-right: 1px solid var(--line); }
+.cell:nth-last-child(-n+2) { border-bottom: 0; }
+.cell .row { min-height: 24px; }
+.label { color: var(--muted); font-size: 14px; }
+.mid { font-size: 28px; font-weight: 500; letter-spacing: -0.02em; margin: 6px 0 10px; white-space: nowrap; }
+.mid small { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 3px; letter-spacing: 0; }
+.note { color: var(--faint); font-size: 12.5px; margin-top: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note + .note { margin-top: 1px; }
+.pill { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 9px; background: var(--raised); color: var(--text); white-space: nowrap; }
+.pill.good { background: #222a10; color: var(--accent); }
+.pill.warn { background: #2b2414; color: var(--warning); }
+.pill.bad { background: #2c1a20; color: var(--negative); }
+.cores { display: flex; align-items: flex-end; gap: 2px; height: 38px; margin-top: 2px; }
+.cores i { flex: 1; height: 100%; background: var(--raised); border-radius: 2px; position: relative; overflow: hidden; }
+.cores i b { position: absolute; left: 0; right: 0; bottom: 0; background: var(--accent); }
+.cores .gap { flex: 0 0 5px; background: none; }
+.io { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; margin-top: 10px; font-size: 14px; }
+.io span { color: var(--muted); } .io b { text-align: right; font-weight: 500; }
+
+.fan { margin-top: 18px; }
+.fan .rpm { font-size: 24px; font-weight: 500; }
+.fan .rpm small { font-size: 13px; color: var(--muted); font-weight: 400; margin-left: 4px; }
+.fan .bar { margin-top: 12px; }
+.scale { display: flex; justify-content: space-between; color: var(--faint); font-size: 12px; margin-top: 6px; }
+.slider { position: relative; margin-top: 4px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 34px; background: transparent; display: block; }
+input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--raised); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 26px; height: 26px; margin-top: -10px; border-radius: 50%; background: var(--text); box-shadow: inset 0 0 0 9px var(--text), inset 0 0 0 13px var(--ground); }
+input[type=range]::-moz-range-track { height: 6px; border-radius: 3px; background: var(--raised); }
+input[type=range]::-moz-range-thumb { width: 26px; height: 26px; border: 0; border-radius: 50%; background: var(--text); }
+#fanNote { color: var(--muted); font-size: 14px; margin-top: 16px; }
+#fanErr { color: var(--negative); font-size: 14px; margin-top: 8px; }
+#fanErr:empty { display: none; }
+
+.procs .head { color: var(--faint); font-size: 13px; }
+.proc { display: grid; grid-template-columns: 1fr 70px 64px; gap: 8px; align-items: baseline; padding: 10px 0 6px; border-bottom: 1px solid var(--line); font-size: 15px; }
+.proc:last-child { border-bottom: 0; }
+.proc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proc b { text-align: right; font-weight: 500; }
+.proc .use { grid-column: 1 / -1; height: 2px; border-radius: 1px; background: var(--chart2); margin-top: -2px; }
+.empty { color: var(--faint); font-size: 14px; padding: 8px 0 2px; }
+footer { color: var(--faint); font-size: 13px; padding: 6px 2px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.png" alt="">Vitals</div>
+  <div id="stamp">Connecting…</div>
+</header>
+<nav class="seg hosts" id="hosts">
+  <button data-h="mini"><i class="dot"></i><span>Mac mini</span></button>
+  <button data-h="peer"><i class="dot"></i><span>MacBook</span></button>
+</nav>
+
+<section class="title">
+  <h1 id="name">Mac mini</h1>
+  <div id="spec">&nbsp;</div>
+  <p id="finding">Connecting…</p>
+</section>
+
+<section class="card">
+  <div class="row"><h2>Power</h2>
+    <div class="tabs" id="ranges"><button>10 m</button><button>1 h</button><button>24 h</button><button>14 d</button></div>
+  </div>
+  <div class="row" style="margin-top:12px;align-items:flex-end">
+    <div class="big"><span id="watts">—</span><small>W</small></div>
+    <div class="stats"><div><span id="todayL">Today</span><b id="today">—</b></div><div><span id="peakL">Peak · 1 h</span><b id="peak">—</b></div></div>
+  </div>
+  <div id="battery"></div>
+  <canvas id="chart"></canvas>
+  <div class="bar" id="split"></div>
+  <div class="legend" id="legend"></div>
+</section>
+
+<section class="card grid">
+  <div class="cell" id="cpu"></div><div class="cell" id="mem"></div>
+  <div class="cell" id="therm"></div><div class="cell" id="gpu"></div>
+  <div class="cell" id="disk"></div><div class="cell" id="net"></div>
+</section>
+
+<section class="card">
+  <div class="row"><h2 id="fanTitle">Fan</h2>
+    <div class="seg" id="modes" style="width:210px"><button data-m="auto">Auto</button><button data-m="fixed">Fixed</button><button data-m="curve">Curve</button></div>
+  </div>
+  <div id="fans"></div>
+  <p id="fanNote"></p>
+  <p id="fanErr"></p>
+</section>
+
+<section class="card procs">
+  <div class="row"><h2>Using the CPU now</h2><div class="head" style="display:grid;grid-template-columns:70px 64px;gap:8px;text-align:right"><span>CPU</span><span>Memory</span></div></div>
+  <div id="procs"></div>
+</section>
+<footer id="foot"></footer>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const RANGES = ['10m', '1h', '24h', '14d'], LABELS = ['10 m', '1 h', '24 h', '14 d'];
+const CEILING = 95, CURVE = [50, 85];
+const blank = () => ({ info: null, snap: null, live: [], state: 'connecting', seen: 0, hist: {} });
+const st = { host: store.get('host', 'mini'), range: +store.get('range', 1) || 0, mini: blank(), peer: blank(),
+             hasPeer: true, pending: null, dragging: false, err: '', hover: null };
+if (!['mini', 'peer'].includes(st.host)) st.host = 'mini';
+if (!(st.range >= 0 && st.range <= 3)) st.range = 1;
+
+// ---------- formatting (the app's Fmt) ----------
+const F = {
+  watts: w => w == null ? '—' : w < 100 ? w.toFixed(1) : w.toFixed(0),
+  wu: w => w == null ? '—' : F.watts(w) + ' W',
+  energy: wh => wh < 1000 ? Math.round(wh) + ' Wh' : (wh / 1000).toFixed(2) + ' kWh',
+  gb: (b, d = 1) => (b / 1073741824).toFixed(d),
+  rate: b => b == null ? '—' : b < 1e3 ? Math.round(b) + ' B/s' : b < 1e6 ? Math.round(b / 1e3) + ' KB/s' : b < 1e9 ? (b / 1e6).toFixed(1) + ' MB/s' : (b / 1e9).toFixed(2) + ' GB/s',
+  size: b => b >= 1e12 ? (b / 1e12).toFixed(2) + ' TB' : b >= 1e11 ? Math.round(b / 1e9) + ' GB' : (b / 1e9).toFixed(1) + ' GB',
+  temp: t => t == null ? '—' : Math.round(t) + '°',
+  pct: p => p == null ? '—' : Math.round(p) + '%',
+  rpm: r => Math.round(r).toLocaleString('en-US'),
+  dur: s => { const m = Math.floor(s / 60), d = Math.floor(m / 1440), h = Math.floor(m / 60) % 24;
+              return d > 0 ? `${d} d ${h} h` : h > 0 ? `${h} h ${m % 60} m` : `${m} m`; },
+  clock: (t, sec) => new Date(t * 1000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: sec ? '2-digit' : undefined }),
+  day: d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+};
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const shortName = h => h.info?.model?.split(' (')[0] || (h === st.mini ? 'Mac mini' : 'MacBook');
+const cur = () => st[st.host];
+
+// ---------- data ----------
+function took(h, s) {
+  h.snap = s; h.seen = s.t;
+  if (s.wSystem != null) h.live.push({ t: s.t, w: s.wSystem });
+  while (h.live.length && s.t - h.live[0].t > 900) h.live.shift();
+}
+
+let es = null;
+function openEvents() {
+  if (es) return;
+  es = new EventSource('events');
+  es.addEventListener('info', e => { st.mini.info = JSON.parse(e.data); render(); });
+  es.onmessage = e => { took(st.mini, JSON.parse(e.data)); st.mini.state = 'live'; render(); };
+  es.onerror = () => { st.mini.state = 'connecting'; render(); };
+}
+function closeEvents() { if (es) { es.close(); es = null; } }
+
+let peerBusy = false;
+async function pollPeer() {
+  if (peerBusy || document.hidden) return;
+  peerBusy = true;
+  try {
+    const r = await fetch('peer', { cache: 'no-store' }).then(r => r.json());
+    if (r.state === 'none') { st.hasPeer = false; if (st.host === 'peer') pick('mini'); }
+    else {
+      const p = st.peer;
+      if (r.info) p.info = r.info;
+      p.state = r.state; p.seen = r.seen || p.seen;
+      if (r.snap && r.snap.t !== p.snap?.t) took(p, r.snap);
+      if (!r.snap && r.state !== 'live') p.snap = p.state === 'connecting' ? p.snap : null;
+    }
+  } catch { st.peer.state = 'asleep'; }
+  peerBusy = false;
+  render();
+}
+
+async function loadHistory() {
+  const host = st.host, key = RANGES[st.range === 0 ? 1 : st.range];
+  try {
+    const r = await fetch(`history?range=${key}&host=${host}`, { cache: 'no-store' });
+    if (r.ok) { st[host].hist[key] = await r.json(); render(); }
+  } catch {}
+}
+
+async function setFan(policy) {
+  st.pending = { policy, until: Date.now() + 5000 };
+  st.err = '';
+  render();
+  try {
+    const r = await fetch('fan', { method: 'POST', headers: { 'X-Vitals': '1' }, body: policy });
+    if (!r.ok) { st.err = (await r.json().catch(() => ({}))).error || 'The Mac mini refused the change.'; st.pending = null; }
+  } catch { st.err = 'The Mac mini did not answer.'; st.pending = null; }
+  render();
+}
+
+// ---------- the finding (Dashboard.finding) ----------
+function finding(h) {
+  const s = h.snap;
+  if (h === st.peer && h.state === 'asleep')
+    return [`${shortName(h)} is asleep or off Tailscale` + (h.seen ? `; last seen ${ago(h.seen)}.` : '.'), 'var(--muted)'];
+  if (!s) return [h === st.mini ? 'Connecting to the Mac mini…' : `Connecting to ${shortName(h)}…`, 'var(--muted)'];
+  const top = s.procs?.[0]?.name;
+  const boot = s.volumes?.find(v => v.boot);
+  if (s.thermal >= 2) return [`Thermal pressure is ${s.thermal === 2 ? 'serious' : 'critical'}: macOS is slowing the chip to cool it.`, 'var(--negative)'];
+  if (boot && (boot.free < 8e9 || boot.free / Math.max(1, boot.total) < 0.05)) return [`Storage is almost full: ${F.size(boot.free)} free of ${F.size(boot.total)} on ${esc(boot.name)}.`, 'var(--negative)'];
+  if (s.pressure >= 4) return [`Memory pressure is critical: ${F.gb(s.swapUsed)} GB is in swap and apps are being squeezed.`, 'var(--negative)'];
+  if (s.tCPU >= 90) {
+    const fans = s.fans.length ? ` with fans at ${F.rpm(Math.max(...s.fans.map(f => f.rpm)))} rpm` : '';
+    return [`CPU at ${F.temp(s.tCPU)}${fans}` + (top ? `; ${esc(top)} is the main load.` : '.'), 'var(--warning)'];
+  }
+  if (s.pressure >= 2) return [`Memory is the pressure point: ${F.gb(s.memUsed)} of ${F.gb(s.memTotal, 0)} GB used, ${F.gb(s.swapUsed)} GB in swap.`, 'var(--warning)'];
+  if (s.cpu >= 70) return [`CPU is busy at ${F.pct(s.cpu)}` + (top ? `; ${esc(top)} is using the most.` : '.'), 'var(--text)'];
+  if (s.battery && !s.battery.external) {
+    const left = s.battery.minutesLeft != null ? ` · ${F.dur(s.battery.minutesLeft * 60)} left at this rate` : '';
+    return [`On battery at ${Math.round(s.battery.percent)}%${left}.`, 'var(--text)'];
+  }
+  const fan = s.fans[0] ? `, fan at ${F.rpm(s.fans[0].rpm)} rpm` : '';
+  return [`Running easy: ${F.wu(s.wSystem)}, CPU ${F.temp(s.tCPU)}${fan}.`, 'var(--muted)'];
+}
+function ago(t) {
+  const s = Date.now() / 1000 - t;
+  if (s < 90) return 'just now';
+  if (s < 86400 && new Date(t * 1000).getDate() === new Date().getDate()) return 'at ' + F.clock(t);
+  return F.dur(s) + ' ago';
+}
+
+// ---------- render ----------
+function render() {
+  const h = cur(), s = h.snap;
+
+  for (const b of $('hosts').children) {
+    const k = b.dataset.h, x = st[k];
+    b.classList.toggle('on', k === st.host);
+    b.style.display = k === 'peer' && !st.hasPeer ? 'none' : '';
+    b.querySelector('.dot').className = 'dot ' + (x.state === 'live' ? 'live' : x.state === 'asleep' ? 'off' : '');
+    b.querySelector('span').textContent = shortName(x);
+  }
+  $('stamp').textContent = h.state === 'live' && s ? 'Live · ' + F.clock(s.t, true)
+    : h.state === 'asleep' ? 'Asleep' : 'Connecting…';
+  $('name').textContent = shortName(h);
+  const i = h.info;
+  $('spec').textContent = i ? `${i.chip.replace('Apple ', '')} · ${i.cores} cores · ${F.gb(i.memory, 0)} GB · ${i.os}` : ' ';
+  const [line, tone] = finding(h);
+  $('finding').innerHTML = line; $('finding').style.color = tone;
+
+  power(h, s);
+  cells(s);
+  fanCard(h, s);
+  procs(s);
+  $('foot').textContent = s ? `Up ${F.dur(s.uptime)} · load ${s.load.map(l => l.toFixed(1)).join(' / ')}` : '';
+}
+
+function power(h, s) {
+  [...$('ranges').children].forEach((b, i) => b.classList.toggle('on', i === st.range));
+  $('watts').textContent = F.watts(s?.wSystem);
+  const hist = h.hist[RANGES[st.range === 0 ? 1 : st.range]];
+  const days = hist?.days || [];
+  const today = days.find(d => d.day === F.day(new Date()));
+  if (st.range === 3) {
+    $('todayL').textContent = 'Today'; $('today').textContent = today ? F.energy(today.wh) : '—';
+    $('peakL').textContent = '14 days'; $('peak').textContent = days.length ? F.energy(days.reduce((a, d) => a + d.wh, 0)) : '—';
+  } else {
+    const { pts, from } = series(h);
+    const rowsPeak = (hist?.rows || []).filter(r => r.t >= from).map(r => r.wMax);
+    const peak = Math.max(-1, ...rowsPeak, ...pts.map(p => p.w));
+    $('todayL').textContent = 'Today'; $('today').textContent = today ? F.energy(today.wh) : '—';
+    $('peakL').textContent = 'Peak · ' + LABELS[st.range]; $('peak').textContent = peak >= 0 ? F.wu(peak) : '—';
+  }
+  const b = s?.battery;
+  $('battery').textContent = b ? `Battery ${Math.round(b.percent)}%` + (b.charging ? ' · charging' : b.external ? ' · on power' : ' · on battery')
+    + (b.inWatts != null ? ` · ${F.wu(b.inWatts)} from the adapter` : '') + (b.health != null ? ` · ${Math.round(b.health)}% health` : '') : '';
+
+  // Where the watts go.
+  const parts = [['CPU', s?.wCPU, 'var(--accent)'], ['GPU', s?.wGPU, 'var(--chart2)'], ['Memory', s?.wDRAM, 'var(--chart3)']];
+  const known = parts.reduce((a, p) => a + (p[1] || 0), 0);
+  parts.push(['Other', s?.wSystem != null ? Math.max(0, s.wSystem - known) : null, 'var(--chart4)']);
+  const total = Math.max(1e-6, s?.wSystem || 0);
+  $('split').innerHTML = parts.map(p => `<i style="width:${(p[1] || 0) / total * 100}%;background:${p[2]}"></i>`).join('');
+  $('legend').innerHTML = parts.map(p => `<div><i class="sw" style="background:${p[2]}"></i>${p[0]}<b>${F.wu(p[0] !== 'Other' && !p[1] ? null : p[1])}</b></div>`).join('');
+  drawChart(h);
+}
+
+/** The points for the chosen range, oldest first: logged minutes, then the live readings after them. */
+function series(h) {
+  const now = h.snap?.t ?? Date.now() / 1000;
+  const span = [600, 3600, 86400, 86400 * 14][st.range], from = now - span;
+  const hist = h.hist[RANGES[st.range === 0 ? 1 : st.range]];
+  const pts = (hist?.rows || []).filter(r => r.t >= from).map(r => ({ t: r.t + (st.range === 2 ? 150 : 30), w: r.w }));
+  const last = pts.length ? pts[pts.length - 1].t : from;
+  return { pts: pts.concat(h.live.filter(p => p.t > last + 30 && p.t >= from)), from, now };
+}
+
+function nice(max) {
+  const raw = Math.max(max, 1) / 2, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(v => v >= raw);
+  return step;
+}
+
+function drawChart(h) {
+  const c = $('chart'), dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  if (!W) return;
+  if (c.width !== W * dpr || c.height !== H * dpr) { c.width = W * dpr; c.height = H * dpr; }
+  const g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.font = '12px -apple-system, system-ui, sans-serif';
+  const plot = { x0: 0, x1: W - 50, y0: 6, y1: H - 22 };
+  const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
+  const msg = text => { g.fillStyle = '#8f9296'; g.textAlign = 'center'; g.fillText(text, pw / 2, ph / 2 + 6); };
+
+  if (st.range === 3) return dayBars(g, h, plot, msg);
+  const { pts, from, now } = series(h), span = now - from;
+  const step = nice(Math.max(0, ...pts.map(p => p.w)) * 1.05), top = step * 2;
+  g.strokeStyle = '#23262b'; g.lineWidth = 1; g.fillStyle = '#8f9296'; g.textAlign = 'left';
+  for (let k = 0; k <= 2; k++) {
+    const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
+    g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
+    g.textAlign = 'right'; g.fillText(`${+(step * k).toFixed(1)} W`, W, y + 4);
+  }
+  for (let k = 0; k <= 3; k++) {
+    const t = from + span * k / 3, x = plot.x0 + pw * k / 3;
+    const label = k === 3 ? 'now' : st.range === 0 ? `−${Math.round((now - t) / 60)} m` : F.clock(t);
+    g.textAlign = k === 0 ? 'left' : k === 3 ? 'right' : 'center';
+    g.fillText(label, x, H - 4);
+  }
+  if (pts.length < 2) return msg(st.range === 0 ? 'Collecting the first readings…' : 'The log fills from the first minute the agent ran.');
+  const px = t => plot.x0 + (t - from) / span * pw, py = w => plot.y1 - Math.min(w, top) / top * ph;
+  const gap = [120, 180, 900][st.range];
+  const runs = [[]];
+  pts.forEach((p, i) => { if (i && p.t - pts[i - 1].t > gap) runs.push([]); runs[runs.length - 1].push(p); });
+  for (const run of runs) {
+    if (!run.length) continue;
+    g.beginPath();
+    run.forEach((p, i) => i ? g.lineTo(px(p.t), py(p.w)) : g.moveTo(px(p.t), py(p.w)));
+    g.strokeStyle = '#c6f24e'; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
+    g.lineTo(px(run[run.length - 1].t), plot.y1); g.lineTo(px(run[0].t), plot.y1); g.closePath();
+    g.fillStyle = 'rgba(198,242,78,0.10)'; g.fill();
+  }
+  if (st.hover != null) {
+    const t = from + (st.hover - plot.x0) / pw * span;
+    const near = pts.reduce((a, p) => Math.abs(p.t - t) < Math.abs(a.t - t) ? p : a);
+    const x = px(near.t), y = py(near.w);
+    g.strokeStyle = '#6b6b6b'; g.beginPath(); g.moveTo(Math.round(x) + 0.5, plot.y0); g.lineTo(Math.round(x) + 0.5, plot.y1); g.stroke();
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(x, y, 3.5, 0, 7); g.fill();
+    const label = `${F.clock(near.t, st.range === 0)} · ${F.watts(near.w)} W`;
+    g.font = '600 12px -apple-system, system-ui, sans-serif';
+    const tw = g.measureText(label).width + 16, lx = Math.min(Math.max(x - tw / 2, 0), plot.x1 - tw);
+    g.fillStyle = '#24272c'; g.beginPath(); g.roundRect(lx, plot.y0, tw, 22, 11); g.fill();
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(label, lx + tw / 2, plot.y0 + 15);
+  }
+}
+
+function dayBars(g, h, plot, msg) {
+  const days = (h.hist['14d']?.days || []).slice(-14);
+  if (!days.length) return msg('No days logged yet.');
+  const pw = plot.x1 - plot.x0, ph = plot.y1 - plot.y0;
+  const step = nice(Math.max(...days.map(d => d.wh)) * 1.05), top = step * 2;
+  g.strokeStyle = '#23262b'; g.fillStyle = '#8f9296'; g.textAlign = 'left';
+  for (let k = 0; k <= 2; k++) {
+    const y = Math.round(plot.y1 - k / 2 * ph) + 0.5;
+    g.beginPath(); g.moveTo(plot.x0, y); g.lineTo(plot.x1, y); g.stroke();
+    g.textAlign = 'right'; g.fillText(F.energy(step * k), W, y + 4);
+  }
+  const slots = 14, bw = (pw - (slots - 1) * 4) / slots, today = F.day(new Date());
+  days.forEach((d, i) => {
+    const x = plot.x0 + (slots - days.length + i) * (bw + 4), bh = Math.max(2, d.wh / top * ph);
+    g.fillStyle = d.day === today ? '#c6f24e' : '#6b6b6b';
+    g.beginPath(); g.roundRect(x, plot.y1 - bh, bw, bh, 2); g.fill();
+    if (i === 0 || i === days.length - 1) {
+      const [, m, dd] = d.day.split('-').map(Number);
+      g.fillStyle = '#8f9296'; g.textAlign = i === 0 ? 'left' : 'right';
+      g.fillText(d.day === today ? 'today' : new Date(2000, m - 1, dd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), i === 0 ? x : x + bw, plot.y1 + 18);
+    }
+  });
+}
+
+const bar = (frac, color = 'var(--chart2)') => `<div class="bar"><i style="width:${Math.max(0, Math.min(1, frac)) * 100}%;background:${color}"></i></div>`;
+const pill = (text, kind = '') => `<span class="pill ${kind}">${text}</span>`;
+
+function cells(s) {
+  const dash = (title) => `<div class="row"><span class="label">${title}</span></div><div class="mid">—</div>`;
+  if (!s) { [['cpu', 'CPU'], ['mem', 'Memory'], ['therm', 'Thermal'], ['gpu', 'GPU'], ['disk', 'Storage'], ['net', 'Network and disk']].forEach(([id, t]) => $(id).innerHTML = dash(t)); return; }
+
+  const e = s.eCores, cores = s.cores.map((v, i) => (i === e && e > 0 ? '<i class="gap"></i>' : '') + `<i><b style="height:${Math.max(4, v)}%"></b></i>`).join('');
+  $('cpu').innerHTML = `<div class="row"><span class="label">CPU</span><span class="note" style="margin:0">load ${s.load[0]?.toFixed(1) ?? '—'}</span></div>
+    <div class="mid">${F.pct(s.cpu)}</div><div class="cores">${cores}</div>
+    <div class="note">${e ? `${e} E-cores · ${s.cores.length - e} P-cores` : `${s.cores.length} cores`}</div>`;
+
+  const pr = s.pressure >= 4 ? pill('Critical', 'bad') : s.pressure >= 2 ? pill('Warning', 'warn') : pill('Normal');
+  const used = s.memUsed, total = Math.max(1, s.memTotal);
+  $('mem').innerHTML = `<div class="row"><span class="label">Memory</span>${pr}</div>
+    <div class="mid">${F.gb(used)}<small>/ ${F.gb(s.memTotal, 0)} GB</small></div>
+    <div class="bar"><i style="width:${Math.max(0, used - s.memCompressed) / total * 100}%;background:var(--chart2)"></i><i style="width:${s.memCompressed / total * 100}%;background:var(--chart3)"></i></div>
+    <div class="note">${F.gb(s.memCompressed)} GB compressed</div>
+    <div class="note" style="color:${s.swapUsed > 1073741824 ? 'var(--warning)' : 'var(--faint)'}">Swap ${F.gb(s.swapUsed)} of ${F.gb(s.swapTotal)} GB</div>`;
+
+  const th = [pill('Nominal'), pill('Fair', 'warn'), pill('Serious', 'bad'), pill('Critical', 'bad')][s.thermal] || '';
+  const others = [s.tGPU != null && `GPU ${F.temp(s.tGPU)}`, s.tSSD != null && `SSD ${F.temp(s.tSSD)}`, s.battery?.temp != null && `Battery ${F.temp(s.battery.temp)}`].filter(Boolean);
+  const hot = s.tCPU >= 90 ? 'var(--negative)' : s.tCPU >= 80 ? 'var(--warning)' : 'var(--chart2)';
+  $('therm').innerHTML = `<div class="row"><span class="label">Thermal</span>${th}</div>
+    <div class="mid">${F.temp(s.tCPU)}<small>CPU</small></div>${bar(((s.tCPU ?? 30) - 30) / 75, hot)}
+    <div class="note">${others.join(' · ') || '&nbsp;'}</div><div class="scale" style="margin-top:1px"><span>30°</span><span>105°</span></div>`;
+
+  $('gpu').innerHTML = `<div class="row"><span class="label">GPU</span></div>
+    <div class="mid">${F.pct(s.gpu)}</div>${bar((s.gpu ?? 0) / 100)}
+    <div class="note">drawing ${F.wu(s.wGPU)}</div><div class="note">Neural Engine ${F.wu(s.wANE)}</div>`;
+
+  const boot = s.volumes.find(v => v.boot) || s.volumes[0];
+  if (boot) {
+    const share = boot.free / Math.max(1, boot.total);
+    const flag = share < 0.05 || boot.free < 8e9 ? pill('Almost full', 'bad') : share < 0.12 ? pill('Low', 'warn') : '';
+    const more = s.volumes.filter(v => v !== boot).map(v => `${esc(v.name)} ${F.size(v.free)} free`);
+    $('disk').innerHTML = `<div class="row"><span class="label">Storage</span>${flag}</div>
+      <div class="mid">${F.size(boot.free).replace(' ', '<small>')} free</small></div>${bar(1 - share)}
+      <div class="note">${F.size(boot.total - boot.free)} of ${F.size(boot.total)} used</div>
+      <div class="note">${[esc(boot.name), ...more].join(' · ')}</div>`;
+  } else $('disk').innerHTML = dash('Storage');
+
+  $('net').innerHTML = `<div class="row"><span class="label">Network and disk</span></div>
+    <div class="io"><span>in</span><b>${F.rate(s.netIn)}</b><span>out</span><b>${F.rate(s.netOut)}</b>
+    <span>read</span><b>${F.rate(s.diskRead)}</b><span>write</span><b>${F.rate(s.diskWrite)}</b></div>`;
+}
+
+function policyOf(h, s) {
+  if (h === st.mini && st.pending) {
+    if (Date.now() < st.pending.until && s?.fanPolicy !== st.pending.policy) return st.pending.policy;
+    st.pending = null;
+  }
+  return s?.fanPolicy || 'auto';
+}
+
+function fanCard(h, s) {
+  const fans = s?.fans || [];
+  const control = h === st.mini && !!s?.root;
+  const policy = policyOf(h, s).split(' '), mode = policy[0];
+  $('fanTitle').textContent = fans.length > 1 ? 'Fans' : 'Fan';
+  for (const b of $('modes').children) { b.classList.toggle('on', b.dataset.m === mode); b.disabled = !control; }
+
+  if (!st.dragging) {
+    $('fans').innerHTML = !s ? '<p class="empty">—</p>' : !fans.length ? '<p class="empty">This Mac has no fans.</p>' : fans.map((f, n) => {
+      const frac = (f.rpm - f.min) / Math.max(1, f.max - f.min);
+      const right = f.manual ? `target ${F.rpm(f.target)}` : `${Math.round(Math.max(0, frac) * 100)}% of range`;
+      const target = +policy[1] || f.target || f.min;
+      const track = mode === 'fixed' && control
+        ? `<div class="slider"><input type="range" min="${f.min}" max="${f.max}" step="50" value="${Math.min(f.max, Math.max(f.min, target))}" aria-label="Fan speed"></div>`
+        : bar(Math.max(0.01, frac));
+      return `<div class="fan"><div class="row"><span class="rpm">${F.rpm(f.rpm)}<small>rpm${fans.length > 1 ? (n ? ' · right' : ' · left') : ''}</small></span>
+        <span class="label" data-target>${mode === 'fixed' && control ? `set to ${F.rpm(target)}` : right}</span></div>
+        ${track}<div class="scale"><span>${F.rpm(f.min)}</span><span>${F.rpm(f.max)}</span></div></div>`;
+    }).join('');
+  }
+
+  let note;
+  if (h === st.peer) note = 'Read-only here. Change these fans from Vitals on the MacBook itself.';
+  else if (s && !s.root) note = "Needs a one-time setup on the Mac mini: ssh -t mac-mini 'sudo ~/.vitals/vitals-agent setup-root'";
+  else if (mode === 'fixed') note = `Holds the speed you set; full speed above ${CEILING}°. Back to Auto when you close this page.`;
+  else if (mode === 'curve') note = `Follows the CPU: minimum at ${policy[1] || CURVE[0]}°, full at ${policy[2] || CURVE[1]}°. Back to Auto when you close this page.`;
+  else note = 'macOS is choosing the speed.';
+  $('fanNote').textContent = note;
+  $('fanErr').textContent = h === st.mini ? st.err : '';
+}
+
+function procs(s) {
+  const list = (s?.procs || []).slice(0, 6);
+  if (!list.length) { $('procs').innerHTML = `<p class="empty">${s ? 'Gathering…' : '—'}</p>`; return; }
+  const max = Math.max(1, ...list.map(p => p.cpu));
+  $('procs').innerHTML = list.map(p => `<div class="proc"><span>${esc(p.name)}</span><b>${p.cpu.toFixed(1)}%</b><b>${F.gb(p.mem)} GB</b>
+    <i class="use" style="width:${Math.max(2, p.cpu / max * 100)}%"></i></div>`).join('');
+}
+
+// ---------- input ----------
+function pick(host) {
+  st.host = host; store.set('host', host); st.hover = null;
+  if (host === 'peer') pollPeer();
+  loadHistory(); render();
+}
+$('hosts').addEventListener('click', e => { const b = e.target.closest('button'); if (b) pick(b.dataset.h); });
+$('ranges').addEventListener('click', e => {
+  const i = [...$('ranges').children].indexOf(e.target.closest('button'));
+  if (i < 0) return;
+  st.range = i; store.set('range', i); st.hover = null; loadHistory(); render();
+});
+$('modes').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.disabled) return;
+  const s = st.mini.snap, f = s?.fans?.[0];
+  if (b.dataset.m === 'fixed') setFan(`fixed ${f ? Math.max(f.min, Math.min(f.max, Math.round(f.rpm / 50) * 50)) : 2000}`);
+  else if (b.dataset.m === 'curve') setFan(`curve ${CURVE[0]} ${CURVE[1]}`);
+  else setFan('auto');
+});
+const fansEl = $('fans');
+fansEl.addEventListener('pointerdown', e => { if (e.target.type === 'range') st.dragging = true; });
+fansEl.addEventListener('input', e => {
+  if (e.target.type !== 'range') return;
+  st.dragging = true;
+  e.target.closest('.fan').querySelector('[data-target]').textContent = `set to ${F.rpm(+e.target.value)}`;
+});
+fansEl.addEventListener('change', e => { if (e.target.type === 'range') { st.dragging = false; setFan(`fixed ${e.target.value}`); } });
+document.addEventListener('pointerup', () => setTimeout(() => { st.dragging = false; }, 300));
+
+const chart = $('chart');
+const hover = e => { const r = chart.getBoundingClientRect(); st.hover = e.clientX - r.left; drawChart(cur()); };
+chart.addEventListener('pointerdown', hover);
+chart.addEventListener('pointermove', e => { if (st.hover != null || e.pointerType === 'mouse') hover(e); });
+chart.addEventListener('pointerleave', () => { st.hover = null; drawChart(cur()); });
+document.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse' && st.hover != null) setTimeout(() => { st.hover = null; drawChart(cur()); }, 1500); });
+window.addEventListener('resize', () => drawChart(cur()));
+
+// ---------- lifecycle ----------
+// Sampling on the Mac mini runs only while this page is visible; a fan off Auto stays there only
+// while the page keeps checking in.
+function wake() { openEvents(); loadHistory(); if (st.host === 'peer') pollPeer(); }
+document.addEventListener('visibilitychange', () => document.hidden ? closeEvents() : wake());
+setInterval(() => { if (st.host === 'peer') pollPeer(); }, 1000);
+setInterval(() => { if (!document.hidden) loadHistory(); }, 60000);
+setInterval(() => {
+  if (!document.hidden && (st.mini.snap?.fanPolicy || 'auto') !== 'auto')
+    fetch('alive', { method: 'POST', headers: { 'X-Vitals': '1' } }).catch(() => {});
+}, 20000);
+pollPeer();
+wake();
+render();
+</script>
+</body>
+</html>
