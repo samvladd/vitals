@@ -277,10 +277,21 @@ final class WebServer {
         case ("GET", "/fleet"):
             struct Reply: Encodable { var members: [Fleet.Member] }
             send(c, 200, json: json(Reply(members: Fleet.membersNow())))
+            Wake.learn(Fleet.members())         // keep how to wake each one, for when it sleeps
         case ("GET", "/summary"):
             guard let i = try? JSONDecoder().decode(MachineInfo.self, from: Data(info.utf8)) else { return send(c, 500, json: "null") }
             send(c, 200, json: json(Fleet.summary(info: i)))
         case ("GET", "/history"): history(r, c)
+        case ("GET", "/timeline"):          // Timeline.swift: one day of the log, read off the main queue
+            DispatchQueue.global(qos: .utility).async {
+                let body = json(Timeline.day(r.query["day"]))
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
+        case ("GET", "/energy"):            // a year of daily totals (Energy.swift); off the main queue, as the first one builds the cache
+            DispatchQueue.global(qos: .utility).async {
+                let body = json(Energy.report())
+                DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
+            }
         case ("GET", "/ssd"):
             DispatchQueue.global(qos: .utility).async {
                 let body = ssdHealth().map(json) ?? "null"
@@ -288,10 +299,16 @@ final class WebServer {
             }
         case ("GET", "/space"): send(c, 200, json: SpaceScanner.shared.current(fresh: r.query["fresh"] == "1").map(json) ?? "null")
         case ("POST", "/fan"): fan(r, c)
+        case ("GET", "/battery"), ("GET", "/battery/history"), ("POST", "/battery"):     // BatteryCare.swift
+            BatteryCare.handle(r) { [weak self] code, body in self?.send(c, code, json: body) }
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
              ("POST", "/screen/resolution"):
             screen(r, c)
+        // Actions (Actions.swift): the count is all another Mac's page may read; the rest is gated there.
+        case ("GET", "/actions/count"): send(c, 200, json: "{\"count\":\(Control.load() == nil ? 0 : Actions.load().count)}")
+        case ("GET", "/actions"), ("POST", "/actions/run"), ("POST", "/actions/stop"): c.origin = nil; let (code, body) = Actions.handle(r); send(c, code, json: body)
+        case ("POST", "/wake"): c.origin = nil; let (code, body) = Wake.request(r); send(c, code, json: body)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
         }
@@ -332,6 +349,7 @@ final class WebServer {
     private func housekeeping() {
         let now = Date()
         if !watchers.isEmpty || SpaceScanner.shared.busy || !Screen.relays.isEmpty { lastBusy = now }
+        if Actions.busy { lastBusy = now }
         Screen.housekeeping()
         // A request still not complete after 10 s is someone holding a connection open: let it go.
         for c in conns.values where !c.parsed && !c.streaming && now.timeIntervalSince(c.born) > 10 { drop(c) }

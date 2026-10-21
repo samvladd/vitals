@@ -125,6 +125,7 @@ func stream() -> Never {
 func logForever() -> Never {
     try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
     let sampler = Sampler(procs: false)
+    let procLog = ProcLog()                     // the timeline's apps, one scan a minute (Timeline.swift)
     var bucket: [Snapshot] = []
     var minute = Int(Date().timeIntervalSince1970 / 60)
     let timer = DispatchSource.makeTimerSource(queue: .main)
@@ -133,7 +134,7 @@ func logForever() -> Never {
     timer.setEventHandler {
         let s = sampler.sample()
         let m = Int(s.t / 60)
-        if m != minute, !bucket.isEmpty { write(bucket, minute: minute); bucket = [] }
+        if m != minute, !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute); bucket = [] }
         minute = m
         bucket.append(s)
     }
@@ -149,14 +150,15 @@ func write(_ b: [Snapshot], minute: Int) {
                           mean(b.compactMap(\.tCPU)), mean(b.compactMap { $0.fans.first?.rpm }),
                           mean(b.map(\.memUsed)), mean(b.map(\.swapUsed)), Double(b.count * 10),
                           b.last?.volumes.first(where: \.boot)?.free ?? 0]
+        + BatteryCare.logColumns(b)     // battery %, power state (0 battery, 1 on power, 2 charging); -1 without a battery
     let line = cols.map { $0 == $0.rounded() ? String(Int($0)) : String(format: "%.2f", $0) }.joined(separator: ",") + "\n"
     let file = logDir.appendingPathComponent(dayFormat.string(from: Date(timeIntervalSince1970: t)) + ".csv")
     if let h = try? FileHandle(forWritingTo: file) {
         h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
     } else {
-        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free\n" + line).write(to: file, atomically: true, encoding: .utf8)
+        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power\n" + line).write(to: file, atomically: true, encoding: .utf8)
     }
-    // Keep a year.
+    // Keep a year. Names start with the date, so the timeline's YYYY-MM-DD.procs.jsonl go with their CSV.
     if minute % 1440 == 0, let files = try? FileManager.default.contentsOfDirectory(atPath: logDir.path) {
         let cutoff = dayFormat.string(from: Date(timeIntervalSinceNow: -366 * 86400))
         for f in files where f < cutoff { try? FileManager.default.removeItem(at: logDir.appendingPathComponent(f)) }
@@ -242,6 +244,7 @@ func setupRoot() {
 
 func removeRoot() {
     guard geteuid() == 0 else { fail("run with sudo") }
+    BatteryCare.uninstall(quiet: true)      // its daemon runs from the copy removed below
     try? FileManager.default.removeItem(atPath: "/etc/sudoers.d/vitals")
     try? FileManager.default.removeItem(atPath: rootPath)
     print("Fan control removed.")
@@ -257,6 +260,7 @@ case "serve": serve()
 case "install-serve": installServe()
 case "control": controlCommand()
 case "screen": screenCommand()
+case "action": actionCommand()
 case "info": emit(machineInfo())
 case "once":
     let s = Sampler(procs: true); _ = s.sample(); usleep(1_000_000); emit(s.sample())
@@ -266,9 +270,11 @@ case "fan":
     if args.dropFirst().first == "auto" { f.release() } else { fail("only `fan auto` is available outside stream") }
 case "install-logger": installLogger()
 case "setup-root": setupRoot()
+case "battery": BatteryCare.command()
+case "battery-daemon": BatteryCare.daemon()
 case "remove-root": removeRoot()
 case "version": print(vitalsVersion)
 case "energy-channels": print(EnergyReport()?.channelNames().joined(separator: "\n") ?? "no IOReport")
 default:
-    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | serve [--port N] [--peer URL] [--allow-origin URL] | install-serve [same] | control [on --from DEVICE,... | off] | screen [on | off] | install-logger | setup-root | remove-root | fan auto | version")
+    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | serve [--port N] [--peer URL] [--allow-origin URL] | install-serve [same] | control [on --from DEVICE,... | off] | screen [on | off] | action [add NAME COMMAND | remove NAME] | install-logger | setup-root | remove-root | battery [limit N|off | keys | install | uninstall] | fan auto | version")
 }

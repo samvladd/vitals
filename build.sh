@@ -8,6 +8,14 @@ VERSION=$(sed -n 's/^let vitalsVersion = "\(.*\)"$/\1/p' Sources/Core/Model.swif
 FLAGS=(-O -target arm64-apple-macos14 -swift-version 5)
 
 rm -rf build/gen && mkdir -p build/gen
+# The pages' scripts, checked before they are embedded: a syntax error would leave a dashboard half
+# drawn with nothing to say why. Needs Node; without it the check is skipped.
+if command -v node >/dev/null; then
+  for page in Sources/Web/index.html Sources/Web/screen.html; do
+    awk '/<script[^>]*>/{f=1; next} /<\/script>/{f=0} f' $page > build/gen/check.mjs
+    node --check build/gen/check.mjs || { echo "syntax error in $page's script"; exit 1; }
+  done
+fi
 # The phone dashboard ships inside the agent: the page, and a Home Screen icon cut from the app icon
 # (full-bleed, since iOS rounds the corners itself).
 iconutil -c iconset -o build/gen/AppIcon.iconset Resources/AppIcon.icns

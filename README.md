@@ -25,7 +25,12 @@ subscription or a cloud account.
 | A phone dashboard: a Home Screen app on your iPhone | **No process at all** until a page opens it |
 | **Your whole fleet**: every Mac of yours found through Tailscale, at a glance, with the watts they draw together | Nothing to configure: set up a Mac and it joins |
 | Quit, force quit and open any app on a Mac, from your phone | Off until you name the devices allowed |
+| **One-tap actions**: commands you saved on a Mac ("Restart Ollama"), run from your phone with their output | Nothing: the page can only run what the Mac already has |
 | **The Mac's screen on your phone**: see it and use it, with trackpad gestures, a magnifier, a keyboard with ⌘ ⌥ ⌃ ⇧, sideways | A 57 KB viewer, ~1 MB on the Mac while connected, nothing after |
+| **Wake a sleeping Mac** from your phone, through another Mac on the same network | A tap; off until app control is on |
+| **What did my Mac do?** Each day hour by hour: the busy apps, hot stretches, sleep and restarts | Under 0.01% of one core for the logger |
+| **Energy and cost**: kWh, cost and CO₂ for today, this month and the year, per Mac and for the fleet | Read from the log the Mac already keeps |
+| **Battery care** on a MacBook: health, cycles, drain, history, and a charge limit (macOS's own, 80–100%) | Nothing to install on Macs that have macOS's limit |
 | No App Store, no developer account, no cloud service, no port open to the internet | Your own [Tailscale](https://tailscale.com) network |
 
 What you can do with it:
@@ -137,6 +142,39 @@ Safety:
 Quit other fan apps (Macs Fan Control, Stats' fan module) first, or they will fight over the fans.
 Fan control talks to the SMC directly, as those apps do; use it at your own risk.
 
+## Battery care (MacBooks)
+
+A **Battery** card on a MacBook's dashboard (hidden on desktops): charge, health (what a full charge
+holds now against new, in mAh), cycles against the rated count, temperature, charging or draining
+watts, time to full or empty, the adapter's watts, and a 1 h / 24 h / 14 d history of the charge,
+logged each minute. `vitals-agent battery` prints the same in Terminal.
+
+**Charge limit** (stop charging at, say, 80%): off until you set one, in the card or with
+`vitals-agent battery limit 80` (`limit off` to stop). Vitals uses one of two ways, whichever the Mac has:
+
+| | macOS's own charge limit | SMC switch, older firmware |
+| --- | --- | --- |
+| Needs | macOS 26.4 or later on Apple silicon | firmware with `CHTE` or `CH0B`/`CH0C` (`vitals-agent battery keys`) |
+| Limits | 80 to 100% | 50 to 100% |
+| Holds while asleep, restarting, Vitals closed | Yes: the firmware enforces it | No: only while awake; it charges normally while asleep |
+| Setup | none, no password | once: `sudo vitals-agent battery install` |
+
+macOS's own limit is the same setting as System Settings › Battery › Charging; Vitals sets it through
+PowerUI, the private framework behind that screen, and reads it back. Firmware that came with macOS 27
+(20457.0.125 and later, also shipped in some 15.x and 26.x updates) removed or locked the SMC switches
+that `battery` and AlDente used, so on those Macs macOS's own limit is the only way.
+
+The SMC way runs a small root daemon (`com.vitals.battery`, from the root-owned copy of the agent). It
+reads only one number, the limit, from a file you own; there is no new sudo rule. Its rules:
+
+- Charging goes back on whenever it stops, is unloaded or crashes (and again when launchd restarts
+  it), before the Mac sleeps, when you unplug, and below 20%.
+- Every write is read back. If the value doesn't stick, or the battery is still charging two minutes
+  after the switch says stop, it turns charging back on and stops trying until you set a limit again.
+- A value it never writes (another battery app) is left alone, not fought over.
+- `vitals-agent battery limit off` turns it off within 15 s; `sudo vitals-agent battery uninstall`
+  (or `remove-root`) removes it and turns charging back on. A restart always clears the SMC switch.
+
 ## On your iPhone
 
 <img src="docs/iphone.png" width="300" align="right" alt="The phone dashboard: Mac mini at 5.4 W, a one-hour power chart, CPU and memory">
@@ -210,6 +248,58 @@ there is no list of addresses to keep.
 
 Each Mac's page may read the others' dashboards (your Macs only, found through Tailscale), never
 change anything on them: quitting apps, fans and the screen stay on each Mac's own page.
+
+**Wake a sleeping Mac.** A Mac that is asleep can't answer its own page, but another Mac on the same
+network can wake it. On the page of a Mac where app control is on for your device (see
+[below](#quit-and-open-apps-from-your-phone)), a sleeping Mac's tile has a **Wake** button, if that Mac
+was last seen on the same network. Tap it and the Mac whose page you opened sends the standard
+Wake-on-LAN packet across its network; the tile says "Waking…" and checks for a minute. So from your
+phone on cellular, open the page of any Mac that is awake at home and wake the mini from there.
+
+- The sleeping Mac needs **Wake for network access** on (System Settings › Battery › Options on a
+  laptop, › Energy on a desktop). It is most dependable over Ethernet.
+- It only wakes your own Macs: each Mac reads how to wake the others (their network card's address)
+  from their dashboards itself, over Tailscale, and keeps it in `wake.json`; it sends the packet only
+  to its own network, never across Tailscale. Every wake is in the activity log.
+- If macOS asks whether `vitals-agent` may find devices on your local network, allow it; a refusal
+  shows on the tile.
+
+## What did my Mac do?
+
+Every dashboard has a **Today on <Mac>** card: the day hour by hour, for the Mac on screen, any Mac
+of the fleet included, and the 13 days before it (‹ ›).
+
+- **A bar per hour**, as tall as the CPU's average and coloured by how hard it worked, with a tick at
+  its busiest minute. Busy hours carry the name of the app behind them; tap an hour for its CPU,
+  watts, temperature and the apps that used the most CPU time. Asleep stretches are hatched gaps.
+- **Moments**, in plain English: "8:04–9:40 pm · Python kept the CPU at 98% · 91° at peak". They are
+  the CPU at 80% or more for ten minutes, the CPU above 90° outside those, swap growing by 2 GB or
+  more, and the Mac asleep, off or restarting. Tap one to see its hour.
+- **The day's totals**: energy, time awake and the busiest app.
+
+It comes from the per-minute log, plus one more line a minute: which apps used the CPU over that
+minute and which held the most memory, kept a year in `Logs/YYYY-MM-DD.procs.jsonl` beside the day's
+CSV (about 250 KB a day). The logger reads each process's CPU time once a minute and takes the
+difference, exact for the minute: about 3 ms of CPU across 1,400 processes, under 0.01% of one core
+on top of the logger's ~0.2%. Apps are logged from this version on, so earlier days show the hours
+and moments without them. What a process used in the minute it quit is not counted.
+
+## Energy and cost
+
+The **Energy & cost** card shows what a Mac used today, this month, last month and this year, in kWh,
+with a bar for each of the last 12 months; this month's bar has a dashed outline to where it is
+heading. The fleet card adds every Mac's month together: "This month: 23.4 kWh · $7.02 · 9.4 kg CO₂
+together".
+
+- **Set your price** on the card, per kWh, in any currency. Until you do, it shows energy and CO₂ only.
+  CO₂ uses 0.4 kg per kWh unless you change it; the real figure depends on your country's grid (under
+  0.1 in France or Norway, about 0.7 in India). Both stay on the device you set them on.
+- **Estimates, said plainly.** Each Mac measures its own power, every minute its logger runs. Time
+  asleep or off is not counted, and a meter at the wall reads a little more (the power supply's own
+  loss). A period the log only partly covers says so ("since Oct 20", "282 of 295 days logged").
+- **Cheap to ask.** A year of minute logs is half a million lines, so each Mac keeps a small summary
+  (`Logs/energy.json`, ~30 KB): a past day is read once, and again only if its file changes; today is
+  read fresh. A year of history: ~0.15 s the first time, ~20 ms after; a fleet tile's month total ~3 ms.
 
 ## Quit and open apps from your phone
 
@@ -344,6 +434,42 @@ system swipe that must not click, Shift for capitals, Backspace both ways iOS se
 refusals (wrong origin, cross-site, an unlisted device, DNS rebinding, a fourth session, a malformed
 frame, a half-sent request, a phone gone silent) and that the Mac's display mode comes back by itself.
 
+## One-tap actions
+
+Save a few commands on a Mac and run them from your phone: restart a service that hung, pull and
+build a project, clear out a cache. **They are defined on the Mac itself.** The page can only ask to
+run one of them by name; it never sends a command line, so nothing typed on a page or forged on the
+network can become a command.
+
+```bash
+vitals-agent action add "Restart Ollama" "brew services restart ollama"
+vitals-agent action add "Pull and build" "cd ~/code/app && git pull && make" --timeout 30m
+vitals-agent action add "Clear Xcode builds" "rm -rf ~/Library/Developer/Xcode/DerivedData"
+vitals-agent action                       # what is saved
+vitals-agent action remove "Clear Xcode builds"
+```
+
+They show in an **Actions** card on that Mac's own page, with app control on: the same named devices
+and the same checks as the Apps card. Tap **Run**, then **Run?** to be sure. While it runs, the card
+shows the time so far, the output as it comes and a **Stop** button; afterwards ✓ or ✗, the exit code,
+how long it took, and the output. On another Mac's page, its tab links to that Mac's own page instead.
+
+How a command runs:
+
+- As you, with `/bin/zsh -lc` (so your `.zprofile`, `PATH` and Homebrew work), in your home folder,
+  with no input. A command that needs your Desktop, Documents or Downloads gets macOS's permission
+  prompt on the Mac, as any app would.
+- One run of each action at a time, for at most 10 minutes unless `--timeout` says otherwise (`90`,
+  `5m`, `2h`). **Stop**, or the time limit, ends the command and everything it started (SIGTERM, then
+  SIGKILL 5 seconds later).
+- The last 64 KB of output, stdout and stderr together, is kept for the card, readable only by you
+  (`actions-last.json`, next to `actions.json`). The activity log records who ran what, the exit code
+  and how long it took, **never the output**, which may hold secrets.
+- The dashboard's server stays up while an action runs, and leaves a minute after it ends, as usual.
+
+Anyone who can edit `actions.json` can already run programs as you, so the checks, as for apps, are
+about the network: what crosses it is an action's id, from a device you named, on your own account.
+
 ## How it works
 
 ![How it works: your iPhone or MacBook reaches the Mac over Tailscale; vitals-agent checks every request, serves the dashboard and relays the screen to macOS Screen Sharing](docs/how-it-works.svg)
@@ -354,7 +480,7 @@ frame, a half-sent request, a phone gone silent) and that the Mac's display mode
 | `vitals-agent stream` | each Mac | Reads the SMC (temperatures, fans, system watts), IOReport (CPU/GPU/memory energy), CPU ticks, VM stats and I/O counters; prints one JSON line per tick. The remote one runs over a single SSH connection. |
 | root-owned `vitals-agent` | each Mac, only while a fan is off Auto | Writes fan speeds. Started by the agent when you pick Fixed or Curve, stopped when you go back to Auto. |
 | `vitals-agent log` | each Mac, under launchd | Writes the per-minute log to `~/Library/Application Support/Vitals/Logs/`. |
-| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`; with `control on`, also the Apps card, and with `screen on` the Screen page. |
+| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`; with `control on`, also the Apps and Actions cards, and with `screen on` the Screen page. |
 
 No network traffic leaves your machines except that SSH connection (and, if you set up the phone
 dashboard, Tailscale's encrypted connection to your phone). No analytics, no accounts.
