@@ -292,6 +292,11 @@ async function connect() {
   rfb.background = '#000';
   rfb.focusOnClick = !touchDevice;
   rfb.showDotCursor = !touchDevice;           // the arrow above; on a phone the trackpad draws its own
+  // On a Mac keyboard noVNC sends Option as Mode_switch (the convention for Linux desktops). A Mac on the
+  // other end expects Alt for Option, which is also what the phone's ⌥ key sends: map it back.
+  const sendKey = rfb.sendKey.bind(rfb);
+  rfb.sendKey = (keysym, code, down) => sendKey(
+    keysym === KeyTable.XK_Mode_switch ? KeyTable.XK_Alt_L : keysym === KeyTable.XK_ISO_Level3_Shift ? KeyTable.XK_Alt_R : keysym, code, down);
   rfb.viewOnly = false;
   rfb.addEventListener('connect', onConnect);
   rfb.addEventListener('disconnect', onDisconnect);
@@ -778,6 +783,25 @@ function offerClipboard(text) {
   t.append(`Copied on ${S.mac}: “${text.length > 40 ? text.slice(0, 40) + '…' : text}”`, b);
   show('toast'); clearTimeout(toastTimer); toastTimer = setTimeout(() => hide('toast'), 8000);
 }
+
+// Scrolling with a mouse or trackpad. noVNC sends at most one wheel step per event and drops the rest,
+// so a quick flick (a few large events) barely moved the Mac. Every real event becomes as many 50 px
+// steps as it is worth (at most 12 at once), with the remainder carried over to the next event.
+const wheelAcc = { x: 0, y: 0 };
+$('view').addEventListener('wheel', e => {
+  if (!e.isTrusted || e.ctrlKey || !S.connected) return;   // ours (below), and pinch-to-zoom, pass through
+  e.preventDefault(); e.stopPropagation();
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1;
+  wheelAcc.x += e.deltaX * unit; wheelAcc.y += e.deltaY * unit;
+  const c = canvas(); if (!c) return;
+  for (let i = 0; i < 12 && (Math.abs(wheelAcc.x) >= 50 || Math.abs(wheelAcc.y) >= 50); i++) {
+    const sx = Math.abs(wheelAcc.x) >= 50 ? Math.sign(wheelAcc.x) * 50 : 0, sy = Math.abs(wheelAcc.y) >= 50 ? Math.sign(wheelAcc.y) * 50 : 0;
+    wheelAcc.x -= sx; wheelAcc.y -= sy;
+    c.dispatchEvent(new WheelEvent('wheel', { clientX: e.clientX, clientY: e.clientY, deltaX: sx, deltaY: sy, deltaMode: 0, bubbles: true, cancelable: true }));
+  }
+  if (Math.abs(wheelAcc.x) >= 50 * 12 || Math.abs(wheelAcc.y) >= 50 * 12) { wheelAcc.x = 0; wheelAcc.y = 0; }
+  touched();
+}, { capture: true, passive: false });
 
 // Desktop: ctrl/⌘ + wheel or the keys + and - zoom too, without reaching the Mac.
 $('view').addEventListener('wheel', e => {

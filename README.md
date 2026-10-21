@@ -6,6 +6,8 @@
 A tiny menu bar app and phone dashboard that watches your Macs, controls their fans, quits and opens<br>
 their apps, and puts their screen on your iPhone: from anywhere, with nothing open to the internet.</p>
 
+![Vitals on an iPhone: the Mac mini's apps with Quit buttons, and its screen sideways with a trackpad pointer and a magnifier](docs/hero.jpg)
+
 <p align="center"><img src="docs/menubar.png" alt="Vitals in the menu bar: watts over CPU temperature for each Mac"></p>
 
 ![The Mac mini view: 4.6 W now, a one-hour power chart, per-core CPU bars, memory pressure, thermals, fan and processes](docs/mac-mini.png)
@@ -192,6 +194,8 @@ and which processes hold it, every temperature sensor. Storage adds:
 
 ## Quit and open apps from your phone
 
+<img src="docs/apps.png" width="300" align="right" alt="The Apps card: each app with its memory and CPU, a Quit button, Tailscale marked Protected, and recent activity">
+
 The dashboard can also list a Mac's apps (one row per app, with the memory and CPU of the app and
 all its helpers, sorted by either) and quit them, force quit them, or open one from Applications. It
 is **off** until you turn it on, on that Mac, naming the devices that may use it:
@@ -230,7 +234,11 @@ The Mac has to be logged in (it is, if the dashboard works), and no macOS permis
 involved. Anyone who can already run programs as you on that Mac could quit your apps anyway, so the
 checks are about the network, not the Mac itself. For the screen itself, use Screen Sharing over Tailscale.
 
+<br clear="right">
+
 ## Control the screen
+
+![The Mac mini's screen on an iPhone held sideways: the trackpad pointer, a magnifier showing the code under it, and the controls in a rail on the right](docs/screen-iphone.jpg)
 
 With app control on, a Mac can also show its screen on the dashboard: see it and use it from your
 phone or another computer, anywhere on your tailnet. Turn it on, on that Mac:
@@ -260,6 +268,8 @@ the full picture with the controls in a rail beside it. Lock the phone or switch
 it reconnects by itself.
 
 From another Mac:
+
+![The Mac mini's screen in a browser window on a MacBook, with the menu open: zoom, picture, Spotlight, Switch app, Mission Control, Copy, Paste, Quit app, Full screen](docs/screen-mac.jpg)
 
 - **Screen** in the Vitals menu (shown for any Mac with Screen on) opens it in your browser.
 - In Safari, **File › Add to Dock** makes it an app of its own: a "Mac mini" in the Dock that opens
@@ -297,6 +307,14 @@ about 1 MB while a session is open; a minute after you leave, nothing is running
 | Vitals' server memory during a 4K session | — | 3.3 MB |
 | Relay CPU at 126 MB/s (far beyond real use) | — | 4% of one core |
 
+**Make it fast: wire the Mac.** The relay adds well under a millisecond; the Mac's own network is
+what you feel. A Mac mini on 2.4 GHz Wi-Fi measured 46–305 ms from a laptop in the same house, where a
+cable gives about 1 ms. Plug it into the router (or at least use 5 GHz), and check the path with
+`tailscale ping <mac>`: "via" a LAN or public address is a direct connection, "via DERP" is relayed
+and slower.
+
+_The desktop in these screenshots is a sample picture served by the test server, not a real Mac._
+
 Every session's line in the log ends with what it moved, as a benchmark from real use: "7.4 MB from
 the Mac, 0.45 MB/s on average, 0.63 MB/s at most". Sizes and rates only, never what was on screen.
 
@@ -308,6 +326,8 @@ refusals (wrong origin, cross-site, an unlisted device, DNS rebinding, a fourth 
 frame, a half-sent request, a phone gone silent) and that the Mac's display mode comes back by itself.
 
 ## How it works
+
+![How it works: your iPhone or MacBook reaches the Mac over Tailscale; vitals-agent checks every request, serves the dashboard and relays the screen to macOS Screen Sharing](docs/how-it-works.svg)
 
 | Piece | Runs on | Job |
 | --- | --- | --- |

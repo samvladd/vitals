@@ -954,7 +954,7 @@ function renderApps() {
     html = shown.map(appRow).join('') || '<p class="empty">No apps open.</p>';
     if (list.length > 8) html += `<button class="link" data-act="all" style="margin-top:10px">${ap.all ? 'Show fewer' : `Show all ${list.length}`}<i class="more">›</i></button>`;
     if (ap.recent.length) html += `<div class="recent"><h3>Recent activity</h3>${ap.recent.slice(0, 3).map(e =>
-      `<div class="ev${e.kind === 'done' ? '' : ' bad'}"><span>${esc(e.text)}</span><span>${ago(e.t)}</span></div>`).join('')}</div>`;
+      `<div class="ev${e.kind === 'done' ? '' : ' bad'}"><span>${esc(e.text.replace(/ · [\d.]+ MB from the Mac.*$/, ''))}</span><span>${ago(e.t)}</span></div>`).join('')}</div>`;
   }
   if (html !== lastApps) { $('apps').innerHTML = html; lastApps = html; }   // unchanged HTML keeps a tap in flight intact
 }
