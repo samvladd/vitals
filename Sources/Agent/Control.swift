@@ -26,6 +26,7 @@ enum Control {
         var login: String                 // the Tailscale account, e.g. you@example.com
         var host: String                  // this Mac's tailnet name, e.g. mac-mini.tail1234.ts.net
         var devices: [String: String]     // tailnet address -> device name
+        var screen: Bool? = nil           // the Screen page (Screen.swift), off unless `screen on`
     }
 
     static func load() -> Config? { (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(Config.self, from: $0) } }
@@ -223,7 +224,7 @@ func controlCommand() {
             guard node.tags.isEmpty else { fail("\(n) is a tagged device, so Tailscale doesn't say who is using it; it can't be allowed.") }
             for ip in node.ips { devices[ip] = friendlyName(node, among: mine) }
         }
-        let c = Control.Config(login: t.login, host: t.me.dns, devices: devices)
+        let c = Control.Config(login: t.login, host: t.me.dns, devices: devices, screen: Control.load()?.screen)
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(c),
               FileManager.default.createFile(atPath: Control.file.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
@@ -240,6 +241,7 @@ func controlCommand() {
     default:
         guard let c = Control.load() else { print("App control is off. Turn it on: vitals-agent control on --from iphone,macbook"); return }
         print("App control is on for \(c.host), from \(Set(c.devices.values).sorted().joined(separator: ", ")) (account \(c.login)).")
+        print(c.screen == true ? "Screen is on: the dashboard can show and control this Mac's screen." : "Screen is off. Turn it on: vitals-agent screen on")
         for e in Control.recent(10) {
             print("  \(Date(timeIntervalSince1970: e.t).formatted(date: .abbreviated, time: .shortened))  \(e.kind == "done" ? "" : e.kind + ": ")\(e.text)")
         }
@@ -285,4 +287,31 @@ func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
           let login = users[String(self_.user)]?["LoginName"] as? String else { return nil }
     let peers = (j["Peer"] as? [String: [String: Any]] ?? [:]).values.compactMap(node)
     return (self_, login, [self_] + peers)
+}
+
+/// `screen on` or `screen off`: the dashboard's Screen page, for the devices app control allows.
+func screenCommand() {
+    guard var c = Control.load() else { fail("Turn on app control first: vitals-agent control on --from iphone,macbook") }
+    switch args.dropFirst().first {
+    case "on":
+        c.screen = true
+        if !screenSharingListening() {
+            print("Note: Screen Sharing doesn't seem to be on. Turn it on in System Settings > General > Sharing > Screen Sharing.")
+        }
+    case "off": c.screen = false
+    default:
+        print(c.screen == true ? "Screen is on." : "Screen is off."); return
+    }
+    guard let data = try? JSONEncoder().encode(c),
+          FileManager.default.createFile(atPath: Control.file.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+        fail("Could not write \(Control.file.path)")
+    }
+    Control.record(c.screen == true ? "Screen turned on" : "Screen turned off")
+    print(c.screen == true ? "Screen is on for \(Set(c.devices.values).sorted().joined(separator: ", ")). Turn it off: vitals-agent screen off" : "Screen is off.")
+}
+
+func screenSharingListening() -> Bool {
+    guard let fd = Screen.connectLocal(5900) else { return false }
+    close(fd)
+    return true
 }

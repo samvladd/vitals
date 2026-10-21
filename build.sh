@@ -16,6 +16,9 @@ import Foundation
 enum WebAssets {
     static let page = Data(base64Encoded: "$(base64 -i Sources/Web/index.html)")!
     static let icon = Data(base64Encoded: "$(base64 -i build/gen/icon.png)")!
+    static let screen = Data(base64Encoded: "$(base64 -i Sources/Web/screen.html)")!
+    static let novnc = Data(base64Encoded: "$(base64 -i Sources/Web/vendor/novnc-1.7.0.js)")!
+    static let novncGz = Data(base64Encoded: "$(gzip -9 -n -c Sources/Web/vendor/novnc-1.7.0.js | base64)")!
 }
 SWIFT
 swiftc $FLAGS -o build/vitals-agent Sources/Core/*.swift Sources/Agent/*.swift build/gen/WebAssets.swift

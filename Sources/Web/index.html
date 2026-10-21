@@ -193,6 +193,7 @@ html.locked { overflow: hidden; }
 .ev span:last-child { white-space: nowrap; }
 .ev.bad span:first-child { color: var(--warning); }
 a.pillbtn { display: inline-block; color: var(--text); text-decoration: none; margin-top: 12px; }
+#screenBtn { margin-top: 0; }
 input[type=search] { width: 100%; height: 40px; border: 0; border-radius: 10px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px; }
 input[type=search]:focus { outline: 2px solid var(--chart3); }
 .cores.tall { height: 84px; gap: 3px; margin-top: 12px; }
@@ -275,7 +276,7 @@ input[type=search]:focus { outline: 2px solid var(--chart3); }
       <div id="procs"></div>
     </section>
     <section class="card" id="appsCard" hidden>
-      <div class="row"><h2 id="appsTitle">Apps</h2><button class="pillbtn" id="openApp">Open…</button></div>
+      <div class="row"><h2 id="appsTitle">Apps</h2><div style="display:flex;gap:8px"><a class="pillbtn" id="screenBtn" href="screen/" hidden>Screen<i class="more">›</i></a><button class="pillbtn" id="openApp">Open…</button></div></div>
       <div class="apps-meta" id="appsMeta"><span id="appsSum"></span>
         <div class="tabs" id="appSort" aria-label="Sort apps by"><button data-k="mem">Memory</button><button data-k="cpu">CPU</button></div></div>
       <p id="appsErr" role="alert"></p>
@@ -917,7 +918,7 @@ async function loadApps() {
     if (r.status === 404) ap.state = 'off';
     else if (!r.ok) { ap.state = 'denied'; ap.denied = j.error || 'This device can’t control apps on this Mac.'; }
     else {
-      ap.state = 'on'; ap.list = j.apps; ap.recent = j.recent;
+      ap.state = 'on'; ap.list = j.apps; ap.recent = j.recent; ap.screen = !!j.screen;
       for (const id in ap.quitting) if (!ap.list.some(a => a.id === id)) delete ap.quitting[id];
     }
   } catch {}
@@ -936,6 +937,7 @@ function renderApps() {
   if (card.hidden) return;
   const on = !peer && ap.state === 'on';
   $('openApp').hidden = $('appsMeta').hidden = !on;
+  $('screenBtn').hidden = !on || !ap.screen;
   $('appsTitle').textContent = peer ? `Apps on ${shortName(st.peer)}` : 'Apps';
   $('appsErr').textContent = peer ? '' : ap.err;
   for (const b of $('appSort').children) b.classList.toggle('on', b.dataset.k === ap.sort);
