@@ -6,8 +6,8 @@ import Foundation
 final class HostLink {
     enum State: Equatable { case connecting, installing, live, offline(String) }
 
-    let key: String                 // "remote" or "local"
-    var sshHost: String?            // nil means this Mac
+    let key: String                 // "ssh:<host>" or "local"
+    let sshHost: String?            // nil means this Mac
     private(set) var info: MachineInfo?
     private(set) var snap: Snapshot?
     private(set) var live: [(t: Double, w: Double)] = []
@@ -28,6 +28,7 @@ final class HostLink {
     private var retryItem: DispatchWorkItem?
     private var fetchingHistory = false
     private var installed = false
+    private var retired = false
 
     static let agentInBundle = Bundle.main.url(forResource: "vitals-agent", withExtension: nil)!
     static let localAgent = FileManager.default.homeDirectoryForCurrentUser
@@ -39,11 +40,17 @@ final class HostLink {
     }()
 
     init(key: String, sshHost: String?) { self.key = key; self.sshHost = sshHost }
+    static func remote(_ host: String) -> HostLink { HostLink(key: Prefs.key(host), sshHost: host) }
 
     var isLocal: Bool { sshHost == nil }
     var shortName: String {
-        guard let m = info?.model else { return isLocal ? "This Mac" : "Mac mini" }
+        guard let m = info?.model else { return sshHost ?? "This Mac" }
         return m.components(separatedBy: " (").first ?? m
+    }
+    /// The model name, or the host when another Mac in the list has the same model (two Mac minis).
+    func name(among links: [HostLink]) -> String {
+        let n = shortName
+        return links.contains { $0 !== self && $0.shortName == n } ? (sshHost ?? "This Mac") : n
     }
 
     private var sshOptions: [String] {
@@ -64,6 +71,7 @@ final class HostLink {
     // MARK: streaming
 
     func start() {
+        guard !retired else { return }
         stop()
         retryItem?.cancel(); nextRetry = nil
         state = .connecting
@@ -106,6 +114,14 @@ final class HostLink {
         try? input?.close()             // EOF tells the agent to hand the fans back and exit
         input = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { if p.isRunning { p.terminate() } }
+    }
+
+    /// For a Mac taken off the list: stops for good, so no retry or wake brings it back.
+    func retire() {
+        retired = true
+        retryItem?.cancel(); retryItem = nil
+        onUpdate = nil
+        stop()
     }
 
     func send(_ line: String) {
@@ -161,6 +177,7 @@ final class HostLink {
 
     private func scheduleRetry() {
         retryItem?.cancel()
+        guard !retired else { return }
         let item = DispatchWorkItem { [weak self] in self?.start() }
         retryItem = item
         nextRetry = Date(timeIntervalSinceNow: backoff)

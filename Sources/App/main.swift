@@ -18,13 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastStatusKey = ""
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        links = [HostLink(key: "remote", sshHost: Prefs.remoteHost), HostLink(key: "local", sshHost: nil)]
+        Prefs.migrate()
+        links = Prefs.remoteHosts.map(HostLink.remote) + [HostLink(key: "local", sshHost: nil)]
         dashboard = Dashboard(links: links)
         dashboard.onSettings = { [weak self] in self?.showSettings() }
         dashboard.onQuit = { NSApp.terminate(nil) }
         dashboard.onSetup = { [weak self] l in self?.setup(l, remove: false) }
         dashboard.onOpenLogs = { [weak self] in self?.openLogs() }
-        dashboard.onHeight = { [weak self] h in self?.resize(h) }
+        dashboard.onHeight = { [weak self] h in if self?.settings == nil { self?.resize(h) } }
         dashboard.selectionChanged = { [weak self] in self?.applyIntervals(); self?.dashboard.link.fetchHistory(); self?.dashboard.needsDisplay = true }
 
         panel = DropPanel(contentRect: dashboard.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
@@ -50,28 +51,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.action = #selector(toggle)
         item.button?.imagePosition = .imageOnly
 
-        for l in links {
-            l.onUpdate = { [weak self, weak l] in self?.updated(l) }
-            l.start()
-        }
+        for l in links { watch(l) }
         applyIntervals()
         updateStatus()
 
         // `--render <dir>`: draw the panel to PNG files and quit (for design review).
         if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine.arguments.count {
             let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+            // Settings is made early so the Tailscale suggestions have time to arrive.
+            var preview: SettingsView?
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { preview = SettingsView(links: self.links, height: 640) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [self] in
-                for key in ["remote", "local"] {
-                    Prefs.selected = key
+                let (selected, range, menuBar) = (Prefs.selected, Prefs.range, Prefs.menuBar)
+                for l in self.links {
+                    Prefs.selected = l.key
+                    let file = l.key.replacingOccurrences(of: ":", with: "-")
                     for (r, name) in [(1, "1h"), (3, "14d")] {
                         Prefs.range = r
-                        self.snapshot(self.dashboard, to: dir.appendingPathComponent("\(key)-\(name).png"))
+                        self.snapshot(self.dashboard, to: dir.appendingPathComponent("\(file)-\(name).png"))
                     }
                 }
-                Prefs.range = 1; Prefs.selected = "remote"
-                let s = SettingsView(links: self.links, height: self.dashboard.frame.height)
-                self.snapshot(s, to: dir.appendingPathComponent("settings.png"))
-                self.snapshot(StatusBarPreview(image: StatusRenderer.image(for: self.links)), to: dir.appendingPathComponent("menubar.png"))
+                Prefs.range = range; Prefs.selected = selected
+                if let s = preview { self.snapshot(s, to: dir.appendingPathComponent("settings.png")) }
+                for key in ["all", "local"] {
+                    Prefs.menuBar = key
+                    self.snapshot(StatusBarPreview(image: StatusRenderer.image(for: self.shownInBar)), to: dir.appendingPathComponent("menubar-\(key).png"))
+                }
+                Prefs.menuBar = menuBar
+                print(StatusRenderer.tooltip(for: self.links))
                 NSApp.terminate(nil)
             }
             for l in links { l.interval = 1; l.wantsProcs = true }
@@ -89,16 +96,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let steps: [(Double, () -> Void)] = [
                 (8, { self.item.button?.performClick(nil)
+                      // A click in another app would close the panel mid-test; this run ignores them.
+                      if let m = self.clickMonitor { NSEvent.removeMonitor(m); self.clickMonitor = nil }
                       log.append("open: visible=\(self.panel.isVisible) frame=\(self.panel.frame) screen=\(self.panel.screen?.visibleFrame ?? .zero)")
                       log.append("intervals: " + self.links.map { "\($0.key)=\($0.interval)" }.joined(separator: " ")) }),
                 (3, { shot("1-open") }),
                 (0.5, { log.append("tab.local: \(self.dashboard.perform("tab.local"))"); log.append("intervals: " + self.links.map { "\($0.key)=\($0.interval)" }.joined(separator: " ")) }),
                 (2, { log.append("range.0: \(self.dashboard.perform("range.0"))"); shot("2-local-10m") }),
-                (0.5, { log.append("fan.fixed (no root, expect false): \(self.dashboard.perform("fan.fixed"))") }),
+                (0.5, { log.append("fan.fixed (true only with fan setup): \(self.dashboard.perform("fan.fixed"))")
+                        log.append("fan.auto: \(self.dashboard.perform("fan.auto"))") }),     // and hand the fans straight back
                 (0.5, { log.append("settings: \(self.dashboard.perform("foot.settings"))"); shot("3-settings") }),
-                (0.5, { log.append("menubar seg local: \(self.settings?.perform("seg.local") ?? false) -> \(Prefs.menuBar)"); Prefs.menuBar = "both" }),
+                (0.5, { log.append("menubar seg local: \(self.settings?.perform("seg.local") ?? false) -> \(Prefs.menuBar)"); Prefs.menuBar = "all" }),
+                (0.5, { self.settings?.addField.stringValue = "-oProxyCommand=x"
+                        log.append("add invalid (expect false): \(self.settings?.add("-oProxyCommand=x") ?? true)")
+                        log.append("add selftest-host: \(self.settings?.add("selftest-host") ?? false) -> " + self.links.map(\.key).joined(separator: " "))
+                        shot("4-settings-added") }),
+                (1, { log.append("remove selftest-host: \(self.settings?.perform("remove.selftest-host") ?? false) -> " + self.links.map(\.key).joined(separator: " "))
+                      log.append("hosts: \(Prefs.remoteHosts)") }),
                 (0.5, { log.append("done: \(self.settings?.perform("done") ?? false), settings closed=\(self.settings == nil)") }),
-                (0.5, { Prefs.selected = "remote"; Prefs.range = 1; self.dashboard.needsDisplay = true
+                (0.5, { let last = self.links.last { !$0.isLocal }?.key ?? "local"
+                        log.append("tab.\(last): \(self.dashboard.perform("tab.\(last)"))"); shot("5-last-remote")
+                        log.append("intervals: " + self.links.map { "\($0.key)=\($0.interval)" }.joined(separator: " ")) }),
+                (2, { Prefs.selected = self.links[0].key; Prefs.range = 1; self.dashboard.needsDisplay = true
                         self.item.button?.performClick(nil); log.append("toggle closed: visible=\(self.panel.isVisible)")
                         log.append("intervals: " + self.links.map { "\($0.key)=\($0.interval)" }.joined(separator: " "))
                         try? log.joined(separator: "\n").write(to: dir.appendingPathComponent("selftest.txt"), atomically: true, encoding: .utf8)
@@ -134,6 +153,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         usleep(400_000)
     }
 
+    // MARK: hosts
+
+    private func watch(_ l: HostLink) {
+        l.onUpdate = { [weak self, weak l] in self?.updated(l) }
+        l.start()
+    }
+
+    /// After the list changes in Settings: same order as Prefs.remoteHosts, this Mac last. Macs that
+    /// stay keep their connection; removed ones are retired (stdin closes, so their agent hands the
+    /// fans back), added ones start.
+    private func rebuildLinks() {
+        let old = links
+        let next = Prefs.remoteHosts.map { h in old.first { $0.sshHost == h } ?? HostLink.remote(h) } + old.filter(\.isLocal)
+        for l in old where !next.contains(where: { $0 === l }) { l.retire() }
+        for l in next where !old.contains(where: { $0 === l }) { watch(l) }
+        links = next
+        dashboard.links = next
+        settings?.links = next
+        if !next.contains(where: { $0.key == Prefs.selected }) { Prefs.selected = next[0].key }
+        if Prefs.menuBar != "all", !next.contains(where: { $0.key == Prefs.menuBar }) { Prefs.menuBar = "all" }
+        lastStatusKey = ""; updateStatus(); applyIntervals()
+    }
+
     // MARK: updates
 
     private var statusTimer: Timer?
@@ -149,21 +191,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.isVisible { settings?.needsDisplay = true; if l === dashboard.link || settings == nil { dashboard.needsDisplay = true } }
     }
 
+    /// "all" (or a Mac no longer listed) shows every Mac; otherwise the one chosen.
     private var shownInBar: [HostLink] {
-        switch Prefs.menuBar {
-        case "remote": return links.filter { !$0.isLocal }
-        case "local": return links.filter { $0.isLocal }
-        default: return links
-        }
+        let one = links.filter { $0.key == Prefs.menuBar }
+        return one.isEmpty ? links : one
     }
 
     private func updateStatus() {
         let shown = shownInBar
-        let key = shown.map { l in l.state == .live ? "\(StatusRenderer.watts(l.snap?.wSystem))|\(Fmt.temp(l.snap?.tCPU))" : "off" }.joined(separator: ",")
+        let key = StatusRenderer.readings(for: shown).map { "\($0.top)|\($0.bottom)" }.joined(separator: ",")
+            + shown.map { "\($0.key)=\($0.state == .live)" }.joined()
         guard key != lastStatusKey else { return }      // redraw the menu bar only when the text changes
         lastStatusKey = key
         item.button?.image = StatusRenderer.image(for: shown)
-        item.button?.toolTip = shown.map { "\($0.shortName): \(Fmt.wattsUnit($0.snap?.wSystem)), CPU \(Fmt.temp($0.snap?.tCPU))" }.joined(separator: "\n")
+        item.button?.toolTip = StatusRenderer.tooltip(for: shown)
     }
 
     /// Fast while you look, slow when you don't: 1 s for the open view, 5 s for the menu bar, 30 s otherwise.
@@ -217,8 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func resize(_ h: CGFloat) {
-        guard settings == nil else { return }
         var f = panel.frame
+        // Never taller than the screen; Settings scrolls instead.
+        let h = min(h, ((panel.screen ?? NSScreen.main)?.visibleFrame.height ?? h) - 16)
         let top = f.maxY
         f.size.height = h; f.origin.y = top - h
         panel.setFrame(f, display: true)
@@ -231,11 +273,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         s.autoresizingMask = [.width, .height]
         s.onDone = { [weak self] in self?.hideSettings() }
         s.onSetup = { [weak self] l, remove in self?.setup(l, remove: remove) }
-        s.onHostChanged = { [weak self] h in
-            guard let r = self?.links.first(where: { !$0.isLocal }) else { return }
-            r.sshHost = h; r.start()
-        }
+        s.onHostsChanged = { [weak self] in self?.rebuildLinks() }
         s.onChange = { [weak self] in self?.lastStatusKey = ""; self?.updateStatus(); self?.applyIntervals() }
+        // Many Macs make Settings taller than the dashboard: grow the panel, never shrink below it.
+        s.onHeight = { [weak self] h in guard let self, self.settings != nil else { return }; self.resize(max(h, self.dashboard.measured)) }
         panel.contentView?.addSubview(s)
         dashboard.isHidden = true
         settings = s
@@ -244,6 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func hideSettings() {
         settings?.removeFromSuperview(); settings = nil
         dashboard.isHidden = false
+        resize(dashboard.measured)
         dashboard.needsDisplay = true
     }
 
@@ -255,10 +297,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let path = HostLink.localAgent.path.replacingOccurrences(of: "\"", with: "\\\"")
             let cmd = "\\\"\(path)\\\" \(verb) --user \(NSUserName())"
             let script = "do shell script \"\(cmd)\" with administrator privileges with prompt \"Vitals needs your password to control the fans on this Mac.\""
-            DispatchQueue.global().async {
+            DispatchQueue.global().async { [weak self] in
                 var err: NSDictionary?
                 NSAppleScript(source: script)?.executeAndReturnError(&err)
-                DispatchQueue.main.async { if err == nil { l.start() } }
+                DispatchQueue.main.async { if err == nil, self?.links.contains(where: { $0 === l }) == true { l.start() } }
             }
         } else {
             let host = l.sshHost ?? ""
@@ -268,9 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let script = "tell application \"Terminal\"\nactivate\ndo script \"\(cmd.replacingOccurrences(of: "\"", with: "\\\""))\"\nend tell"
             var err: NSDictionary?
             NSAppleScript(source: script)?.executeAndReturnError(&err)
-            // Reconnect a few times while the password is typed in Terminal.
+            // Reconnect a few times while the password is typed in Terminal (unless that Mac was removed meanwhile).
             for delay in [15.0, 30, 60, 120] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { if (l.snap?.root ?? false) == remove || (!remove && l.snap?.v != vitalsVersion) { l.start() } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak l] in
+                    guard let l, self?.links.contains(where: { $0 === l }) == true else { return }
+                    if (l.snap?.root ?? false) == remove || (!remove && l.snap?.v != vitalsVersion) { l.start() }
+                }
             }
         }
         close()
@@ -280,6 +325,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let d = v as? Dashboard {
             d.frame.size.height = 2000; d.display()        // first pass measures the height
             d.frame.size.height = d.measured
+        } else if let s = v as? SettingsView {
+            s.frame.size.height = 2000                      // not in a window: measure by drawing offscreen
+            if let rep = s.bitmapImageRepForCachingDisplay(in: s.bounds) { s.cacheDisplay(in: s.bounds, to: rep) }
+            s.frame.size.height = max(s.measured, dashboard.measured)
         }
         v.display()
         guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
@@ -297,12 +346,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             close()
             return
         }
-        // Copy the Mac mini's log files here first, so they open like any other folder.
-        let dest = base.appendingPathComponent("\(l.shortName) logs")
+        // Copy that Mac's log files here first, so they open like any other folder. Named by host:
+        // two Mac minis share a model name.
+        let host = l.sshHost ?? ""
+        let dest = base.appendingPathComponent("\(host) logs")
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/scp")
-        p.arguments = ["-q", "-o", "BatchMode=yes", "\(l.sshHost ?? ""):Library/Application\\ Support/Vitals/Logs/*.csv", dest.path]
+        p.arguments = ["-q", "-o", "BatchMode=yes", "\(host):Library/Application\\ Support/Vitals/Logs/*.csv", dest.path]
         p.terminationHandler = { _ in DispatchQueue.main.async { NSWorkspace.shared.open(dest) } }
         try? p.run()
         close()
