@@ -94,35 +94,41 @@ Fan control talks to the SMC directly, as those apps do; use it at your own risk
 
 ## On your iPhone
 
-<img src="docs/iphone.png" width="300" align="right" alt="The phone dashboard: Mac mini at 14.1 W, a one-hour power chart, CPU and memory">
+<img src="docs/iphone.png" width="300" align="right" alt="The phone dashboard: Mac mini at 5.4 W, a one-hour power chart, CPU and memory">
 
-The always-on Mac can host a phone dashboard: the same readings, the power history, and fan control,
-as a Home Screen web app. No App Store, no Apple developer account, nothing open to the internet —
-it is reachable only from your own devices on [Tailscale](https://tailscale.com).
+Each Mac can serve a dashboard of its own: the same readings, the power history and fan control,
+as a Home Screen web app on your phone or a page on any computer. No App Store, no Apple developer
+account, nothing open to the internet: it is reachable only from your own devices on
+[Tailscale](https://tailscale.com).
 
-On that Mac (where the agent is already installed at `~/.vitals/`):
+On each Mac you want to see (the agent is at `~/.vitals/vitals-agent` on a remote Mac and at
+`~/Library/Application Support/Vitals/bin/vitals-agent` on the one running the app):
 
 ```bash
-~/.vitals/vitals-agent install-serve --peer you@your-macbook
+vitals-agent install-serve --peer https://other-mac.your-tailnet.ts.net \
+  --allow-origin https://this-mac.your-tailnet.ts.net,https://other-mac.your-tailnet.ts.net
 ```
 
-This starts `vitals-agent serve` under launchd (`com.vitals.serve`), bound to `127.0.0.1:8787` only,
-and runs `tailscale serve --bg 8787` to put it on your tailnet over HTTPS. The first time, Tailscale
-prints a link to enable Serve for your tailnet; open it, then run `tailscale serve --bg 8787` again.
-`tailscale serve status` shows the address, e.g. `https://mac-mini.your-tailnet.ts.net`.
+This registers `com.vitals.serve` with launchd and runs `tailscale serve --bg 8787`. The first time,
+Tailscale prints a link to enable Serve for your tailnet; open it, then run the command again.
+`tailscale serve status` shows the address. On the iPhone (with Tailscale connected), open it in
+Safari → Share → **Add to Home Screen**; it opens full-screen like an app.
 
-On the iPhone (with Tailscale connected), open that address in Safari → Share → **Add to Home
-Screen**. It opens full-screen like an app.
+- **Costs nothing while nobody looks.** launchd holds the port (`127.0.0.1:8787` only) and starts
+  the server when a page connects; it samples once a second while a page is on screen and exits a
+  minute after the last one closes. Idle, there is no extra process at all. History comes from the
+  per-minute log the agent already keeps.
+- **Two Macs, no relay.** The page on one Mac reads the other straight from its own address; the
+  other Mac allows that with `--allow-origin`. When it is asleep the tab says so and when it was last
+  seen. From that page the other Mac's fans are read-only; open its own page to change them.
+- **Fans** work as in the app, on the Mac whose page you opened (after the one-time fan setup). They
+  go back to **Auto** 30 seconds after the last page closes, or 90 seconds after a page stops checking
+  in (phone locked), and the 95 °C ceiling still applies.
 
-- **Two Macs.** `--peer` lets the dashboard show your MacBook too: the Mini reads it over SSH while you
-  have that tab open. `install-serve` prints one line to add to `~/.ssh/authorized_keys` on the MacBook;
-  that key can only run `vitals-agent gate` — readings and history, never the fans or a shell. When the
-  MacBook is asleep the tab says so and when it was last seen. Leave out `--peer` for one Mac.
-- **Fans** work as in the app, on the Mac that hosts the page (after the one-time fan setup). They go
-  back to **Auto** 30 seconds after the last open page closes, or 90 seconds after the page stops
-  checking in (phone locked), and the 95 °C ceiling still applies.
-- **Cost.** Idle, the server is a ~5 MB process that does nothing; it samples once a second only while
-  a page is open. When Vitals updates the agent, the server restarts itself on the new version.
+| While a page is open (Mac mini, M4 Pro) | CPU | Memory |
+| --- | --- | --- |
+| `vitals-agent serve` | ~2% of one core | ~6.5 MB |
+| Nobody looking | — | no process |
 
 <br clear="right">
 
@@ -134,7 +140,7 @@ Screen**. It opens full-screen like an app.
 | `vitals-agent stream` | each Mac | Reads the SMC (temperatures, fans, system watts), IOReport (CPU/GPU/memory energy), CPU ticks, VM stats and I/O counters; prints one JSON line per tick. The remote one runs over a single SSH connection. |
 | root-owned `vitals-agent` | each Mac, only while a fan is off Auto | Writes fan speeds. Started by the agent when you pick Fixed or Curve, stopped when you go back to Auto. |
 | `vitals-agent log` | each Mac, under launchd | Writes the per-minute log to `~/Library/Application Support/Vitals/Logs/`. |
-| `vitals-agent serve` | the always-on Mac, under launchd (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`. |
+| `vitals-agent serve` | each Mac, started by launchd when a page connects (optional) | The phone dashboard on `127.0.0.1:8787`, published to your tailnet by `tailscale serve`. |
 
 No network traffic leaves your machines except that SSH connection (and, if you set up the phone
 dashboard, Tailscale's encrypted connection to your phone). No analytics, no accounts.
@@ -151,9 +157,8 @@ rm -rf /Applications/Vitals.app "$HOME/Library/Application Support/Vitals"
 ```
 
 On the remote Mac, the same with `~/.vitals/vitals-agent` and `rm -rf ~/.vitals`.
-If you set up the phone dashboard there, also run
-`launchctl bootout gui/$(id -u)/com.vitals.serve; rm ~/Library/LaunchAgents/com.vitals.serve.plist; tailscale serve --https=443 off`
-and remove the `vitals-peer` line from `~/.ssh/authorized_keys` on the MacBook.
+If you set up the phone dashboard, on each Mac also run
+`launchctl bootout gui/$(id -u)/com.vitals.serve; rm ~/Library/LaunchAgents/com.vitals.serve.plist; tailscale serve --https=443 off`.
 
 ## License
 

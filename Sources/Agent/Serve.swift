@@ -1,18 +1,16 @@
 import Foundation
-import Network
+import launch
 
-// `serve`: the phone dashboard. A tiny HTTP server bound to 127.0.0.1 only; `tailscale serve` puts it
-// on the tailnet over HTTPS, so nothing listens on a network interface. It samples only while a page
-// is open, and a fan it moved off Auto goes back to Auto when the pages stop checking in.
-
-let peerKey = NSHomeDirectory() + "/.vitals/peer_key"
+// `serve`: the phone dashboard. launchd owns the listening socket on 127.0.0.1 and starts this only
+// when a page connects; it samples only while a page is streaming and exits a minute after the last
+// one leaves, so nobody looking costs nothing. `tailscale serve` puts the port on the tailnet over
+// HTTPS. Each Mac serves itself: the page on one reads the other's address directly (CORS), and a fan
+// moved off Auto goes back to Auto when the pages stop checking in.
 
 func option(_ name: String) -> String? {
     guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
     return args[i + 1]
 }
-
-func validPeer(_ s: String) -> Bool { !s.isEmpty && s.allSatisfy { $0.isLetter || $0.isNumber || "@._-".contains($0) } }
 
 func json<T: Encodable>(_ v: T) -> String { (try? JSONEncoder().encode(v)).map { String(decoding: $0, as: UTF8.self) } ?? "null" }
 
@@ -38,53 +36,60 @@ private var server: WebServer?     // lives for the whole process
 
 func serve() -> Never {
     let port = option("--port").flatMap(UInt16.init) ?? 8787
-    let peer = option("--peer").flatMap { validPeer($0) ? Peer($0) : nil }
-    server = WebServer(port: port, peer: peer)
+    guard let fd = launchdSocket() ?? bindLocal(port) else { fail("cannot listen on 127.0.0.1:\(port)") }
+    let peer = option("--peer").map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+    let origins = Set((option("--allow-origin") ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " /")) })
+    server = WebServer(listener: fd, peer: peer, origins: origins)
     server?.start()
     dispatchMain()
+}
+
+/// The socket launchd opened for us (see `install-serve`), or nil when started by hand.
+private func launchdSocket() -> Int32? {
+    let out = UnsafeMutablePointer<UnsafeMutablePointer<Int32>>.allocate(capacity: 1)
+    defer { out.deallocate() }
+    var count = 0
+    guard launch_activate_socket("Listener", out, &count) == 0, count > 0 else { return nil }
+    defer { free(out.pointee) }
+    return out.pointee[0]
+}
+
+private func bindLocal(_ port: UInt16) -> Int32? {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var on: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+    var a = sockaddr_in()
+    a.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    a.sin_family = sa_family_t(AF_INET)
+    a.sin_port = port.bigEndian
+    a.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let ok = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    guard ok == 0, listen(fd, 16) == 0 else { close(fd); return nil }
+    return fd
 }
 
 func installServe() {
     let port = option("--port").flatMap(UInt16.init) ?? 8787
     var a = ["serve", "--port", String(port)]
-    let peer = option("--peer")
-    if let peer {
-        guard validPeer(peer) else { fail("--peer takes user@host") }
+    if let peer = option("--peer") {
+        guard URL(string: peer)?.scheme == "https" else { fail("--peer takes https://other-mac.your-tailnet.ts.net") }
         a += ["--peer", peer]
-        if !FileManager.default.fileExists(atPath: peerKey) {
-            run("/usr/bin/ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", "vitals-peer", "-f", peerKey])
-        }
     }
-    installLaunchAgent("com.vitals.serve", a)
-    let tailscale = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
-        .first { FileManager.default.isExecutableFile(atPath: $0) }
+    if let o = option("--allow-origin") { a += ["--allow-origin", o] }
+    let listener: [String: Any] = ["SockNodeName": "127.0.0.1", "SockServiceName": String(port), "SockType": "stream", "SockFamily": "IPv4"]
+    installLaunchAgent("com.vitals.serve", a, ["RunAtLoad": false, "KeepAlive": false, "Sockets": ["Listener": listener]])
     // Shows Tailscale's own output: the first time, it prints a link to enable Serve on the tailnet
     // and waits for it, so give up after a while rather than hang.
-    let ts = tailscale.map { t -> Process in
-        let p = Process(); p.executableURL = URL(fileURLWithPath: t); p.arguments = ["serve", "--bg", String(port)]; return p
-    }
+    let ts = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"]
+        .first { FileManager.default.isExecutableFile(atPath: $0) }
+        .map { t -> Process in let p = Process(); p.executableURL = URL(fileURLWithPath: t); p.arguments = ["serve", "--bg", String(port)]; return p }
     if let ts, (try? ts.run()) != nil {
         let deadline = Date(timeIntervalSinceNow: 30)
         while ts.isRunning, Date() < deadline { usleep(200_000) }
         if ts.isRunning { ts.terminate(); print("Run `tailscale serve --bg \(port)` again once Serve is enabled.") }
     } else {
-        print("Serving on 127.0.0.1:\(port). To reach it from your phone: tailscale serve --bg \(port)")
-    }
-    if let peer, let pub = try? String(contentsOfFile: peerKey + ".pub", encoding: .utf8) {
-        print("To show \(peer) too, add this line to ~/.ssh/authorized_keys on it (it can only read readings):")
-        print("restrict,command=\"exec \\\"$HOME/Library/Application Support/Vitals/bin/vitals-agent\\\" gate\" " + pub.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-}
-
-/// The forced command for the dashboard's key on a peer Mac: it may stream and read history, and
-/// it cannot touch the fans.
-func gate() -> Never {
-    let w = (ProcessInfo.processInfo.environment["SSH_ORIGINAL_COMMAND"] ?? "").split(separator: " ").map(String.init)
-    switch w.first {
-    case "stream": fanCommandsAllowed = false; stream()
-    case "history": emit(loadHistory(hours: min(336, max(0, w.dropFirst().first.flatMap(Double.init) ?? 24)))); exit(0)
-    case "info": emit(machineInfo()); exit(0)
-    default: fail("vitals gate: only stream, history and info")
+        print("Listening on 127.0.0.1:\(port). To reach it from your phone: tailscale serve --bg \(port)")
     }
 }
 
@@ -112,40 +117,77 @@ struct Request {
     }
 }
 
+/// One accepted connection. Blocking writes with a send timeout: a page that stops reading is dropped.
+final class Conn {
+    let fd: Int32
+    var buf = Data()
+    var streaming = false
+    var origin: String?
+    private let source: DispatchSourceRead
+
+    init(_ fd: Int32, onRead: @escaping (Conn, Data?) -> Void) {
+        self.fd = fd
+        var on: Int32 = 1, timeout = timeval(tv_sec: 3, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        source.setCancelHandler { Darwin.close(fd) }
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            var chunk = [UInt8](repeating: 0, count: 16384)
+            let n = read(fd, &chunk, chunk.count)
+            onRead(self, n > 0 ? Data(chunk.prefix(n)) : nil)
+        }
+        source.resume()
+    }
+
+    @discardableResult func write(_ d: Data) -> Bool {
+        d.withUnsafeBytes { raw in
+            var off = 0
+            while off < raw.count {
+                let n = Darwin.write(fd, raw.baseAddress! + off, raw.count - off)
+                if n <= 0 { return false }
+                off += n
+            }
+            return true
+        }
+    }
+
+    func close() { source.cancel() }
+}
+
 final class WebServer {
     /// A fan stays off Auto only while an open page keeps checking in...
     static let lease = 90.0
     /// ...and goes back to Auto this long after the last page closes.
     static let grace = 30.0
+    /// The process exits this long after the last page leaves; launchd starts it again for the next one.
+    static let linger = 60.0
 
-    private let port: UInt16
-    private let peer: Peer?
-    private var listener: NWListener?
-    private var watchers: [ObjectIdentifier: NWConnection] = [:]
+    private let listenFD: Int32
+    private let peer: String?
+    private let origins: Set<String>
+    private var acceptSource: DispatchSourceRead?
+    private var conns: [ObjectIdentifier: Conn] = [:]
+    private var watchers: [Conn] { conns.values.filter(\.streaming) }
     private var sampler: Sampler?
-    private let driver = FanDriver()
+    private lazy var driver = FanDriver()
     private let ticker = DispatchSource.makeTimerSource(queue: .main)
     private let chores = DispatchSource.makeTimerSource(queue: .main)
     private var ticking = false
     private var lastLine: String?
     private var lastAlive = Date.distantPast
+    private var lastBusy = Date()
     private var emptySince: Date?
-    private let info = json(machineInfo())
-    private let binary = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
-    private lazy var built = modified(binary)
+    private lazy var info = json(machineInfo())
 
-    init(port: UInt16, peer: Peer?) { self.port = port; self.peer = peer }
+    init(listener: Int32, peer: String?, origins: Set<String>) { listenFD = listener; self.peer = peer; self.origins = origins }
 
     func start() {
-        let params = NWParameters.tcp
-        params.allowLocalEndpointReuse = true
-        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
-        guard let l = try? NWListener(using: params) else { fail("cannot listen on 127.0.0.1:\(port)") }
-        l.newConnectionHandler = { [weak self] c in self?.accept(c) }
-        l.stateUpdateHandler = { if case .failed(let e) = $0 { fail("listener failed: \(e)") } }
-        l.start(queue: .main)
-        listener = l
-        _ = built
+        let s = DispatchSource.makeReadSource(fileDescriptor: listenFD, queue: .main)
+        s.setEventHandler { [weak self] in self?.accept() }
+        s.resume()
+        acceptSource = s
         ticker.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(100))
         ticker.setEventHandler { [weak self] in self?.tick() }
         chores.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
@@ -153,49 +195,63 @@ final class WebServer {
         chores.resume()
     }
 
-    private func accept(_ c: NWConnection) {
-        c.stateUpdateHandler = { if case .failed = $0 { c.cancel() } }
-        c.start(queue: .main)
-        read(c, Data())
+    private func accept() {
+        let fd = Darwin.accept(listenFD, nil, nil)
+        guard fd >= 0 else { return }
+        lastBusy = Date()
+        let c = Conn(fd) { [weak self] c, d in self?.received(c, d) }
+        conns[ObjectIdentifier(c)] = c
     }
 
-    private func read(_ c: NWConnection, _ buf: Data) {
-        c.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] d, _, done, err in
-            guard let self else { return }
-            var buf = buf
-            if let d { buf.append(d) }
-            if let r = Request(buf) { self.route(r, c) }
-            else if done || err != nil || buf.count > 65536 { c.cancel() }
-            else { self.read(c, buf) }
-        }
+    private func received(_ c: Conn, _ d: Data?) {
+        guard let d else { return drop(c) }          // closed by the other end
+        if c.streaming { return }
+        c.buf.append(d)
+        if let r = Request(c.buf) { c.buf = Data(); route(r, c) }
+        else if c.buf.count > 65536 { drop(c) }
     }
 
-    private func send(_ c: NWConnection, _ status: Int, _ type: String, _ body: Data, cache: Bool = false) {
-        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 504: "Gateway Timeout"][status] ?? ""
+    private func drop(_ c: Conn) {
+        guard conns.removeValue(forKey: ObjectIdentifier(c)) != nil else { return }
+        c.close()
+        lastBusy = Date()
+        guard c.streaming, watchers.isEmpty else { return }
+        emptySince = Date()
+        lastLine = nil
+        if ticking { ticker.suspend(); ticking = false }
+    }
+
+    /// Lets the page on the other Mac read this one. GET only: no preflight is ever granted, so a page
+    /// elsewhere can watch these fans but never post to them.
+    private func cors(_ c: Conn) -> String {
+        guard let o = c.origin, origins.contains(o) else { return "" }
+        return "Access-Control-Allow-Origin: \(o)\r\nVary: Origin\r\n"
+    }
+
+    private func send(_ c: Conn, _ status: Int, _ type: String, _ body: Data, cache: String = "no-store") {
+        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict"][status] ?? ""
         let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
-            + "Cache-Control: \(cache ? "max-age=86400" : "no-store")\r\nConnection: close\r\n\r\n"
-        c.send(content: Data(head.utf8) + body, contentContext: .finalMessage, isComplete: true,
-               completion: .contentProcessed { _ in c.cancel() })
+            + "Cache-Control: \(cache)\r\n\(cors(c))Connection: close\r\n\r\n"
+        c.write(Data(head.utf8) + body)
+        drop(c)
     }
 
-    private func send(_ c: NWConnection, _ status: Int, json body: String) {
-        send(c, status, "application/json", Data(body.utf8))
-    }
+    private func send(_ c: Conn, _ status: Int, json body: String) { send(c, status, "application/json", Data(body.utf8)) }
 
-    private func route(_ r: Request, _ c: NWConnection) {
+    private func route(_ r: Request, _ c: Conn) {
+        c.origin = r.headers["origin"]
         // A page on another site can post here from a tailnet browser, but it cannot add this header
         // without a CORS preflight, which this server never grants.
         if r.method == "POST", r.headers["x-vitals"] != "1" { return send(c, 403, json: #"{"error":"forbidden"}"#) }
         switch (r.method, r.path) {
-        case ("GET", "/"), ("GET", "/index.html"): send(c, 200, "text/html; charset=utf-8", WebAssets.page)
-        case ("GET", "/manifest.webmanifest"): send(c, 200, "application/manifest+json", Data(Self.manifest.utf8), cache: true)
-        case ("GET", "/icon.png"), ("GET", "/apple-touch-icon.png"): send(c, 200, "image/png", WebAssets.icon, cache: true)
+        case ("GET", "/"), ("GET", "/index.html"):
+            // Revalidated on each open so an update shows at once; it is small and only on the tailnet.
+            send(c, 200, "text/html; charset=utf-8", WebAssets.page, cache: "no-cache")
+        case ("GET", "/manifest.webmanifest"): send(c, 200, "application/manifest+json", Data(Self.manifest.utf8), cache: "max-age=604800")
+        case ("GET", "/icon.png"), ("GET", "/apple-touch-icon.png"): send(c, 200, "image/png", WebAssets.icon, cache: "max-age=604800")
+        case ("GET", "/config"): send(c, 200, json: "{\"peer\":\(peer.map { "\"\($0)\"" } ?? "null"),\"info\":\(info)}")
         case ("GET", "/events"): watch(c)
-        case ("GET", "/info"): send(c, 200, json: info)
         case ("GET", "/history"): history(r, c)
-        case ("GET", "/peer"):
-            guard let peer else { return send(c, 200, json: #"{"state":"none"}"#) }
-            send(c, 200, json: peer.status())
         case ("POST", "/fan"): fan(r, c)
         case ("POST", "/alive"): lastAlive = Date(); send(c, 204, "text/plain", Data())
         default: send(c, 404, "text/plain", Data("not found".utf8))
@@ -209,15 +265,11 @@ final class WebServer {
 
     // MARK: live readings
 
-    private func watch(_ c: NWConnection) {
-        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nX-Accel-Buffering: no\r\n\r\n"
-        c.send(content: Data((head + "retry: 2000\n\nevent: info\ndata: \(info)\n\n" + (lastLine ?? "")).utf8), completion: .contentProcessed { _ in })
-        watchers[ObjectIdentifier(c)] = c
+    private func watch(_ c: Conn) {
+        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\(cors(c))\r\n"
+        guard c.write(Data((head + "retry: 3000\n\nevent: info\ndata: \(info)\n\n" + (lastLine ?? "")).utf8)) else { return drop(c) }
+        c.streaming = true
         emptySince = nil
-        c.stateUpdateHandler = { [weak self] st in
-            switch st { case .failed, .cancelled: self?.drop(c); default: break }
-        }
-        awaitClose(c)
         if !ticking {
             if sampler == nil { sampler = Sampler(procs: true) }
             _ = sampler?.sample()            // restart the rate counters after an idle spell
@@ -226,177 +278,49 @@ final class WebServer {
         }
     }
 
-    /// The page sends nothing on this connection, so a read that ends means it went away.
-    private func awaitClose(_ c: NWConnection) {
-        c.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, done, err in
-            if done || err != nil { self?.drop(c) } else { self?.awaitClose(c) }
-        }
-    }
-
-    private func drop(_ c: NWConnection) {
-        guard watchers.removeValue(forKey: ObjectIdentifier(c)) != nil else { return }
-        c.cancel()
-        guard watchers.isEmpty else { return }
-        emptySince = Date()
-        lastLine = nil
-        if ticking { ticker.suspend(); ticking = false }
-    }
-
     private func tick() {
-        guard let sampler, !watchers.isEmpty else { return }
+        let ws = watchers
+        guard let sampler, !ws.isEmpty else { return }
         var s = sampler.sample()
         s.fanPolicy = driver.policy
         s.root = driver.available
         let line = "data: \(json(s))\n\n"
         lastLine = line
         let data = Data(line.utf8)
-        for c in watchers.values {
-            c.send(content: data, completion: .contentProcessed { [weak self] e in if e != nil { self?.drop(c) } })
-        }
+        for c in ws where !c.write(data) { drop(c) }
     }
 
     private func housekeeping() {
         let now = Date()
+        if !watchers.isEmpty { lastBusy = now }
         if driver.policy != "auto",
            now.timeIntervalSince(lastAlive) > Self.lease || emptySince.map({ now.timeIntervalSince($0) > Self.grace }) == true {
             driver.set("auto")
         }
-        peer?.idle()
-        // The app replaced this binary with a newer one: let launchd start that instead.
-        if watchers.isEmpty, driver.policy == "auto", modified(binary) != built { exit(0) }
-    }
-
-    private func modified(_ path: String) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+        // Nobody looking: leave. launchd keeps the socket and starts this again for the next page.
+        if conns.isEmpty, driver.policy == "auto", now.timeIntervalSince(lastBusy) > Self.linger { exit(0) }
     }
 
     // MARK: history and fans
 
-    private func history(_ r: Request, _ c: NWConnection) {
+    private func history(_ r: Request, _ c: Conn) {
         let hours: Double = ["10m": 1, "1h": 1, "24h": 24, "14d": 0][r.query["range"] ?? ""] ?? 1
-        let done: (History?) -> Void = { [weak self] h in
-            guard let h else { self?.send(c, 504, json: #"{"error":"unreachable"}"#); return }
-            self?.send(c, 200, json: json(hours >= 24 ? coarse(h, every: 300) : h))
-        }
-        if r.query["host"] == "peer" {
-            guard let peer else { return send(c, 404, json: #"{"error":"no peer"}"#) }
-            peer.history(hours: hours, done)
-        } else {
-            DispatchQueue.global(qos: .utility).async {
-                let h = loadHistory(hours: hours)
-                DispatchQueue.main.async { done(h) }
-            }
+        DispatchQueue.global(qos: .utility).async {
+            let h = loadHistory(hours: hours)
+            let body = json(hours >= 24 ? coarse(h, every: 300) : h)
+            DispatchQueue.main.async { [weak self] in self?.send(c, 200, json: body) }
         }
     }
 
-    private func fan(_ r: Request, _ c: NWConnection) {
+    private func fan(_ r: Request, _ c: Conn) {
         let words = r.body.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let p = FanControl.Policy(words) else { return send(c, 400, json: #"{"error":"auto, fixed RPM or curve LOW HIGH"}"#) }
         guard driver.available else {
-            return send(c, 409, json: #"{"error":"Fan control needs a one-time setup on this Mac: sudo ~/.vitals/vitals-agent setup-root"}"#)
+            return send(c, 409, json: #"{"error":"Fan control needs a one-time setup on this Mac (vitals-agent setup-root)."}"#)
         }
         lastAlive = Date()
         driver.set(p.text)
         tick()
         send(c, 200, json: "{\"policy\":\"\(p.text)\"}")
-    }
-}
-
-// MARK: peer
-
-/// The other Mac, read over SSH with a key that its authorized_keys pins to `vitals-agent gate`.
-/// Connected only while a page is looking at it.
-final class Peer {
-    let host: String
-    private var proc: Process?
-    private var input: FileHandle?
-    private var buffer = Data()
-    private var info: String?
-    private var snap: String?
-    private var seen: Double
-    private var gotData = false
-    private var asked = Date.distantPast
-    private var retryAt = Date.distantPast
-    private static let seenFile = NSHomeDirectory() + "/.vitals/peer-seen"
-
-    init(_ host: String) {
-        self.host = host
-        seen = (try? String(contentsOfFile: Self.seenFile, encoding: .utf8)).flatMap { Double($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 0
-    }
-
-    private var ssh: [String] {
-        ["-i", peerKey, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-         "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "-o", "StrictHostKeyChecking=accept-new",
-         "-o", "UserKnownHostsFile=\(NSHomeDirectory())/.vitals/known_hosts", host]
-    }
-
-    /// The latest reading for the page, or why there is none and when it was last seen.
-    func status() -> String {
-        asked = Date()
-        if proc == nil, Date() >= retryAt { start() }
-        let live = snap != nil && Date().timeIntervalSince1970 - seen < 6
-        let state = live ? "live" : (proc != nil && !gotData) ? "connecting" : "asleep"
-        return "{\"state\":\"\(state)\",\"host\":\"\(host)\",\"seen\":\(seen),\"info\":\(info ?? "null"),\"snap\":\(live ? snap! : "null")}"
-    }
-
-    private func start() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        p.arguments = ssh + ["stream"]
-        let out = Pipe(), inp = Pipe()
-        p.standardOutput = out; p.standardInput = inp; p.standardError = FileHandle.nullDevice
-        out.fileHandleForReading.readabilityHandler = { [weak self] h in
-            let d = h.availableData
-            if d.isEmpty { h.readabilityHandler = nil }
-            DispatchQueue.main.async { self?.consume(d) }
-        }
-        p.terminationHandler = { [weak self] p in DispatchQueue.main.async { self?.ended(p) } }
-        guard (try? p.run()) != nil else { retryAt = Date(timeIntervalSinceNow: 15); return }
-        proc = p; input = inp.fileHandleForWriting; gotData = false; buffer = Data()
-        try? input?.write(contentsOf: Data("interval 1\nprocs on\n".utf8))
-    }
-
-    private func consume(_ d: Data) {
-        buffer.append(d)
-        while let nl = buffer.firstIndex(of: 0x0a) {
-            let line = Data(buffer[buffer.startIndex..<nl])
-            buffer.removeSubrange(buffer.startIndex...nl)
-            let text = String(decoding: line, as: UTF8.self)
-            if (try? JSONDecoder().decode(MachineInfo.self, from: line)) != nil { info = text }
-            else if text.hasPrefix("{") { snap = text; seen = Date().timeIntervalSince1970; gotData = true }
-        }
-    }
-
-    private func ended(_ p: Process) {
-        guard proc === p else { return }
-        proc = nil; input = nil
-        retryAt = Date(timeIntervalSinceNow: gotData ? 2 : 15)    // asleep or off the tailnet: try again later
-        try? String(seen).write(toFile: Self.seenFile, atomically: true, encoding: .utf8)
-    }
-
-    /// Called every few seconds: hang up once no page has asked for a while.
-    func idle() {
-        guard let p = proc, Date().timeIntervalSince(asked) > 20 else { return }
-        try? input?.close()
-        input = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { if p.isRunning { p.terminate() } }
-    }
-
-    func history(hours: Double, _ done: @escaping (History?) -> Void) {
-        let a = ssh + ["history \(Int(hours))"]
-        DispatchQueue.global(qos: .utility).async {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = a
-            let out = Pipe()
-            p.standardOutput = out; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
-            var h: History?
-            if (try? p.run()) != nil {
-                let data = out.fileHandleForReading.readDataToEndOfFile()
-                p.waitUntilExit()
-                h = try? JSONDecoder().decode(History.self, from: data)
-            }
-            DispatchQueue.main.async { done(h) }
-        }
     }
 }
