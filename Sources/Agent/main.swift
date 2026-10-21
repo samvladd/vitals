@@ -1,7 +1,8 @@
 import Foundation
 
 // vitals-agent: runs on each Mac. The menu bar app starts `stream` over SSH (or locally) and reads
-// one JSON line per tick; `log` runs under launchd and keeps a per-minute record on disk.
+// one JSON line per tick; `log` runs under launchd and keeps a per-minute record on disk; `serve`
+// runs under launchd on the always-on Mac and hosts the phone dashboard (Serve.swift).
 
 setvbuf(stdout, nil, _IOLBF, 0)
 signal(SIGPIPE, SIG_IGN)
@@ -65,6 +66,9 @@ final class FanDriver {
     private func send(_ line: String) { try? input?.write(contentsOf: Data((line + "\n").utf8)) }
 }
 
+/// False when a peer reaches this agent through `gate`: it may watch, never touch the fans.
+var fanCommandsAllowed = true
+
 func stream() -> Never {
     let sampler = Sampler(procs: false)
     let fans = (geteuid() == 0) ? sampler.smc.map { FanControl(smc: $0) } : nil
@@ -104,7 +108,7 @@ func stream() -> Never {
             DispatchQueue.main.async {
                 switch w.first {
                 case "interval": if let v = w.dropFirst().first.flatMap(Double.init), v >= 0.5, v <= 60 { interval = v; schedule() }
-                case "fan":
+                case "fan" where fanCommandsAllowed:
                     if let p = FanControl.Policy(Array(w.dropFirst())) { fans?.set(p); driver?.set(p.text); tick() }
                 case "now": tick()
                 case "procs": sampler.withProcs = w.dropFirst().first == "on"
@@ -161,7 +165,7 @@ func write(_ b: [Snapshot], minute: Int) {
 
 // MARK: history
 
-func history(hours: Double) {
+func loadHistory(hours: Double) -> History {
     let since = Date().timeIntervalSince1970 - hours * 3600
     var rows: [LogRow] = [], days: [DayTotal] = []
     for back in (0..<14).reversed() {
@@ -178,26 +182,29 @@ func history(hours: Double) {
         }
         days.append(DayTotal(day: day, wh: wh, peak: peak, minutes: n))
     }
-    emit(History(rows: rows, days: days))
+    return History(rows: rows, days: days)
 }
 
 // MARK: setup
 
 func installLogger() {
+    installLaunchAgent("com.vitals.logger", ["log"], ["ProcessType": "Background", "LowPriorityIO": true, "Nice": 10])
+}
+
+func installLaunchAgent(_ label: String, _ arguments: [String], _ extra: [String: Any] = [:]) {
     let me = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
-    let label = "com.vitals.logger"
     let plist = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents/\(label).plist")
-    let dict: [String: Any] = ["Label": label, "ProgramArguments": [me, "log"], "RunAtLoad": true, "KeepAlive": true,
-                               "ProcessType": "Background", "LowPriorityIO": true, "Nice": 10]
+    let dict = ["Label": label, "ProgramArguments": [me] + arguments, "RunAtLoad": true, "KeepAlive": true]
+        .merging(extra) { a, _ in a }
     try? FileManager.default.createDirectory(at: plist.deletingLastPathComponent(), withIntermediateDirectories: true)
     let data = try! PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
     try! data.write(to: plist)
     let uid = getuid()
     for domain in ["gui/\(uid)", "user/\(uid)"] {
         _ = run("/bin/launchctl", ["bootout", "\(domain)/\(label)"])
-        if run("/bin/launchctl", ["bootstrap", domain, plist.path]) == 0 { print("logger running in \(domain)"); return }
+        if run("/bin/launchctl", ["bootstrap", domain, plist.path]) == 0 { print("\(label) running in \(domain)"); return }
     }
-    fail("could not start the logger with launchctl")
+    fail("could not start \(label) with launchctl")
 }
 
 @discardableResult func run(_ path: String, _ a: [String]) -> Int32 {
@@ -244,7 +251,10 @@ func removeRoot() {
 switch args.first ?? "" {
 case "stream": stream()
 case "log": logForever()
-case "history": history(hours: args.dropFirst().first.flatMap(Double.init) ?? 24)
+case "history": emit(loadHistory(hours: args.dropFirst().first.flatMap(Double.init) ?? 24))
+case "serve": serve()
+case "install-serve": installServe()
+case "gate": gate()
 case "info": emit(machineInfo())
 case "once":
     let s = Sampler(procs: true); _ = s.sample(); usleep(1_000_000); emit(s.sample())
@@ -258,5 +268,5 @@ case "remove-root": removeRoot()
 case "version": print(vitalsVersion)
 case "energy-channels": print(EnergyReport()?.channelNames().joined(separator: "\n") ?? "no IOReport")
 default:
-    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | install-logger | setup-root | remove-root | fan auto | version")
+    print("vitals-agent \(vitalsVersion): stream | log | history [hours] | info | once | serve [--port N] [--peer user@host] | install-serve [--peer user@host] | gate | install-logger | setup-root | remove-root | fan auto | version")
 }
