@@ -505,8 +505,12 @@ function fleetCard(all, dotOf) {
     const sub = x.state === 'off' ? ['Asleep or off Tailscale', x.seen ? `Last seen ${ago(x.seen)}` : '']
       : [[cpu != null && `CPU ${F.pct(cpu)}`, t != null && F.temp(t)].filter(Boolean).join(' · ') || '…',
          used != null && mem ? `${F.gb(used, 0)} of ${F.gb(mem, 0)} GB used` : ''];
+    // What needs attention, said on the tile itself: a hot CPU, or a drive about to fill up.
+    const free = live ? bootOf(x.snap)?.free : m.free;
+    const alert = x.state === 'off' ? '' : free != null && free < 8e9 ? `<div class="sub" style="color:var(--negative)">Storage almost full: ${F.size(free)} free</div>`
+      : t >= 90 ? `<div class="sub" style="color:var(--warning)">Running hot</div>` : '';
     return `<button class="mac${x === cur() ? ' on' : ''}" data-h="${esc(x.key)}"><div class="top"><i class="${dotOf(x)}"></i><span>${esc(shortName(x))}</span></div>
-      <div class="w">${x.state === 'off' ? '—' : F.watts(w)}<small>W</small></div>${sub.map(l => `<div class="sub">${esc(l)}</div>`).join('')}</button>`;
+      <div class="w">${x.state === 'off' ? '—' : F.watts(w)}<small>W</small></div>${sub.map(l => `<div class="sub">${esc(l)}</div>`).join('')}${alert}</button>`;
   };
   const html = all.map(tile).join('') + none.map(p => `<div class="mac none"><div class="top"><span>${esc(shortName(p))}</span></div>
       <div class="sub" style="white-space:normal;margin-top:6px">No Vitals here yet. Set up its dashboard and it joins this list.</div></div>`).join('');
