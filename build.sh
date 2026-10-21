@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "${0:A:h}"
 APP=build/Vitals.app
+# One version for everything: the agent's (Sources/Core/Model.swift), which the app checks on each Mac.
+VERSION=$(sed -n 's/^let vitalsVersion = "\(.*\)"$/\1/p' Sources/Core/Model.swift)
 FLAGS=(-O -target arm64-apple-macos14 -swift-version 5)
 
 rm -rf build/gen && mkdir -p build/gen
@@ -29,7 +31,7 @@ mkdir -p $APP/Contents/MacOS $APP/Contents/Resources
 cp build/Vitals $APP/Contents/MacOS/Vitals
 cp build/vitals-agent $APP/Contents/Resources/vitals-agent
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns $APP/Contents/Resources/
-cat > $APP/Contents/Info.plist <<'PLIST'
+cat > $APP/Contents/Info.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -39,8 +41,8 @@ cat > $APP/Contents/Info.plist <<'PLIST'
   <key>CFBundleExecutable</key><string>Vitals</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>Vitals opens Terminal so you can type your password once to enable fan control on your Mac mini.</string>
@@ -48,4 +50,4 @@ cat > $APP/Contents/Info.plist <<'PLIST'
 PLIST
 codesign --force --sign - $APP/Contents/Resources/vitals-agent
 codesign --force --sign - $APP
-echo "built $APP ($(du -sh $APP | cut -f1))"
+echo "built $APP $VERSION ($(du -sh $APP | cut -f1))"
