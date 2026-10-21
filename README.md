@@ -106,9 +106,9 @@ notarized, so macOS will block the first launch; allow it once in System Setting
 xattr -dr com.apple.quarantine /Applications/Vitals.app
 ```
 
-Then open Vitals, click the readings in the menu bar → **Settings**, and enter your remote Mac's SSH
-host (default `mac-mini`). Vitals copies its agent to `~/.vitals/` on that Mac and starts the logger
-there by itself.
+Then open Vitals, click the readings in the menu bar → **Settings**, and add your other Macs by SSH
+host (`mac-mini`, or one of your Tailscale Macs, which Settings suggests). Add as many as you like.
+Vitals copies its agent to `~/.vitals/` on each one and starts its logger there by itself.
 
 ![Settings](docs/settings.png)
 
