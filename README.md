@@ -380,7 +380,8 @@ From another Mac:
 
 ![The Mac mini's screen in a browser window on a MacBook, with the menu open: zoom, picture, Spotlight, Switch app, Mission Control, Copy, Paste, Quit app, Full screen](docs/screen-mac.jpg)
 
-- **Screen** in the Vitals menu (shown for any Mac with Screen on) opens it in your browser.
+- **Right-click the Vitals icon in the menu bar** for each Mac's **Screen** and **Dashboard**, or use
+  the **Screen ›** and **Dashboard ›** buttons beside the Mac's name in the Vitals panel.
 - In Safari, **File › Add to Dock** makes it an app of its own: a "Mac mini" in the Dock that opens
   straight onto its screen, in its own window.
 - The mouse and keyboard just work, with your own pointer always visible. Pinch the trackpad to zoom

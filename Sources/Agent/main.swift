@@ -88,6 +88,7 @@ func stream() -> Never {
     usleep(250_000)
     var info = machineInfo()
     info.screen = Control.screenURL()
+    info.dashboard = dashboardURL()
     emit(info)
     tick()
     schedule()
