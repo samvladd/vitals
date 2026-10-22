@@ -117,6 +117,17 @@ final class Dashboard: Canvas {
     private func title(_ l: HostLink, _ s: Snapshot?, _ y: inout CGFloat) {
         let name = l.info?.name.replacingOccurrences(of: "’s ", with: "’s\u{00a0}") ?? l.shortName
         drawText(l.shortName, Theme.font(20, .semibold), Theme.text, pad, y)
+        // Straight to this Mac's screen or its phone dashboard, in the browser, when it has them.
+        var px = pad + textWidth(l.shortName, Theme.font(20, .semibold)) + 14
+        for (id, label, url, accent) in [("screen", "Screen", l.info?.screen, true), ("web", "Dashboard", l.info?.dashboard, false)] {
+            guard let url = url.flatMap(URL.init(string:)) else { continue }
+            let f = Theme.font(12, .semibold), w = textWidth(label, f) + 24
+            let r = NSRect(x: px, y: y + 2, width: w, height: 24)
+            let hov = hit(r, "title.\(id)") { _ in NSWorkspace.shared.open(url) }
+            fill(r, accent ? (hov ? Theme.accent : Theme.accent.withAlphaComponent(0.85)) : (hov ? Theme.text.withAlphaComponent(0.18) : Theme.raised), radius: 12)
+            drawText(label + " ›", f, accent ? Theme.ground : Theme.text, r.minX + 12, y + 7)
+            px += w + 8
+        }
         if let i = l.info {
             let spec = "\(i.chip.replacingOccurrences(of: "Apple ", with: "")) · \(i.cores) cores · \(Fmt.gb(i.memory, 0)) GB · \(i.os)"
             drawText(spec, Theme.font(12), Theme.faint, Self.width - pad, y + 7, align: .right)

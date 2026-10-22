@@ -81,3 +81,12 @@ enum Fleet {
         return s
     }
 }
+
+/// This Mac's phone dashboard, for the menu bar app's links: its tailnet address, once `install-serve`
+/// has set the dashboard up. Asked once, when the app connects.
+func dashboardURL() -> String? {
+    let plist = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents/com.vitals.serve.plist")
+    guard FileManager.default.fileExists(atPath: plist.path) else { return nil }
+    if let c = Control.load() { return "https://\(c.host)/" }
+    return tailnet().map { "https://\($0.me.dns)/" }
+}

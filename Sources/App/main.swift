@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.button?.target = self
         item.button?.action = #selector(toggle)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.imagePosition = .imageOnly
 
         for l in links { watch(l) }
@@ -221,7 +222,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: panel
 
     @objc private func toggle() {
+        // Right-click or control-click: a short menu straight to each Mac's screen and dashboard.
+        if let e = NSApp.currentEvent, e.type == .rightMouseUp || e.modifierFlags.contains(.control) { return showMenu() }
         panel.isVisible ? close() : open()
+    }
+
+    private func showMenu() {
+        if panel.isVisible { close() }
+        menuActions = []
+        let menu = NSMenu()
+        for l in links {
+            let screen = l.info?.screen.flatMap(URL.init(string:)), web = l.info?.dashboard.flatMap(URL.init(string:))
+            guard screen != nil || web != nil else { continue }
+            menu.addItem(NSMenuItem.sectionHeader(title: l.shortName))
+            if let screen { menu.addItem(urlItem("Screen", screen, symbol: "display")) }
+            if let web { menu.addItem(urlItem("Dashboard", web, symbol: "gauge.with.dots.needle.33percent")) }
+        }
+        if menu.items.isEmpty {
+            let none = NSMenuItem(title: "No screens or dashboards set up yet", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
+        menu.addItem(.separator())
+        menu.addItem(actionItem("Open Vitals") { [weak self] in self?.open() })
+        menu.addItem(actionItem("Settings…") { [weak self] in self?.open(); self?.showSettings() })
+        menu.addItem(actionItem("Quit Vitals") { NSApp.terminate(nil) })
+        guard let button = item.button else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 5), in: button)
+    }
+
+    private var menuActions: [() -> Void] = []
+    private func actionItem(_ title: String, _ action: @escaping () -> Void) -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: "")
+        i.target = self; i.tag = menuActions.count
+        menuActions.append(action)
+        return i
+    }
+    private func urlItem(_ title: String, _ url: URL, symbol: String) -> NSMenuItem {
+        let i = actionItem(title) { NSWorkspace.shared.open(url) }
+        i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        i.toolTip = url.absoluteString
+        return i
+    }
+    @objc private func menuAction(_ sender: NSMenuItem) {
+        if menuActions.indices.contains(sender.tag) { menuActions[sender.tag]() }
     }
 
     private func open() {
