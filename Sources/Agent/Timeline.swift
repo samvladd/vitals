@@ -246,7 +246,7 @@ enum Timeline {
         guard let text = try? String(contentsOf: logDir.appendingPathComponent(day + ".csv"), encoding: .utf8) else { return [] }
         return text.split(separator: "\n").dropFirst().compactMap { line in
             let c = line.split(separator: ",").compactMap { Double($0) }
-            return c.count >= 10 ? Row(t: c[0], w: c[1], cpu: c[3], temp: c[5], swap: c[8], seconds: c[9]) : nil
+            return c.count >= 10 ? Row(t: c[0], w: c[1], cpu: c[3], temp: Sampler.real(c[5]) ? c[5] : 0, swap: c[8], seconds: c[9]) : nil
         }.sorted { $0.t < $1.t }
     }
 

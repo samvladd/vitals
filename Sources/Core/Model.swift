@@ -115,7 +115,7 @@ struct LogRow: Codable {
     var wMax: Double
     var cpu: Double
     var gpu: Double
-    var temp: Double
+    var temp: Double?    // nil: no real reading that minute
     var fan: Double
     var mem: Double      // bytes used
     var swap: Double

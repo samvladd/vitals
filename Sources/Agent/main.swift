@@ -129,12 +129,16 @@ func logForever() -> Never {
     let procLog = ProcLog()                     // the timeline's apps, one scan a minute (Timeline.swift)
     var bucket: [Snapshot] = []
     var minute = Int(Date().timeIntervalSince1970 / 60)
+    // The logger this one replaced saved the minute so far when it was stopped (below); a second row
+    // for the same minute would count it twice, so start with the next one.
+    var skipping = lastLoggedMinute() == minute
     let timer = DispatchSource.makeTimerSource(queue: .main)
     timer.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(2))
     _ = sampler.sample()
     timer.setEventHandler {
         let s = sampler.sample()
         let m = Int(s.t / 60)
+        if skipping { if m == minute { return }; skipping = false; minute = m }
         if m != minute, !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute); bucket = [] }
         minute = m
         bucket.append(s)
@@ -151,6 +155,17 @@ func logForever() -> Never {
     term.resume()
     signalSources.append(term)
     dispatchMain()
+}
+
+/// The minute of today's last row, from the end of the file.
+private func lastLoggedMinute() -> Int? {
+    let file = logDir.appendingPathComponent(dayFormat.string(from: Date()) + ".csv")
+    guard let h = try? FileHandle(forReadingFrom: file) else { return nil }
+    defer { try? h.close() }
+    let size = (try? h.seekToEnd()) ?? 0
+    try? h.seek(toOffset: size > 400 ? size - 400 : 0)
+    let tail = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
+    return tail.split(separator: "\n").last.flatMap { $0.split(separator: ",").first }.flatMap { Double($0) }.map { Int($0 / 60) }
 }
 
 let logHeader = "t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power"
@@ -204,7 +219,7 @@ func loadHistory(hours: Double) -> History {
             guard c.count >= 10 else { continue }
             wh += c[1] * c[9] / 3600; peak = max(peak, c[2]); n += 1
             if c[0] >= since {
-                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: c[5], fan: c[6], mem: c[7], swap: c[8],
+                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: Sampler.real(c[5]) ? c[5] : nil, fan: c[6], mem: c[7], swap: c[8],
                                    free: c.count > 10 && c[10] > 0 ? c[10] : nil))
             }
         }

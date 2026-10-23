@@ -51,8 +51,9 @@ final class Sampler {
     private var gpuKeys: [String] = []
     private var ssdKey: String?
     private var hotKeys: [String] = []      // the hottest CPU sensors at the last full scan, and one from each group
-    private var groupKeys: [String: String] = [:]
-    private var awake = 0                   // how many of hotKeys read a real temperature last sample
+    private var groupKeys: [String: String] = [:]   // each group's hottest sensor when last seen awake
+    private var awake: Set<String> = []     // which of hotKeys read a real temperature last sample
+    private var avg: Double?                // all CPU sensors' mean at the last full scan
     private var ticks = 0
     private var volumeCache: (Date, [Volume]) = (.distantPast, [])
     private lazy var hasBattery = !registryProperty("AppleSmartBattery", "CurrentCapacity").isEmpty
@@ -74,7 +75,7 @@ final class Sampler {
             guard let (type, _) = smc.bytes(k), type == "flt " else { continue }
             let fam = String(k.prefix(2))
             if ["Tp", "Te", "Tm"].contains(fam) { cpuKeys.append(k) }
-            else if fam == "Tg" { gpuKeys.append(k) }
+            else if fam == "Tg", let v = smc.value(k), Self.real(v) { gpuKeys.append(k) }     // a sample of these is enough
         }
         ssdKey = smc.value("TH0x") != nil ? "TH0x" : nil
     }
@@ -161,22 +162,26 @@ final class Sampler {
         // be the whole hottest dozen; the one from each group still sees a cluster that wakes up.
         func scan() -> [Double] {
             let all = cpuKeys.compactMap { k in smc.value(k).map { (k, $0) } }.filter { Self.real($0.1) }
-            for k in cpuKeys where groupKeys[String(k.prefix(3))] == nil { groupKeys[String(k.prefix(3))] = k }
             for (k, _) in all.sorted(by: { $0.1 < $1.1 }) { groupKeys[String(k.prefix(3))] = k }    // the hottest awake one wins
+            // A group never seen awake: a few of its sensors, in case one of them is dead.
+            let groups = Dictionary(grouping: cpuKeys) { String($0.prefix(3)) }.map { g, ks in
+                groupKeys[g].map { [$0] } ?? stride(from: 0, to: ks.count, by: max(1, ks.count / 4)).map { ks[$0] }
+            }
             let hot = all.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
-            hotKeys = hot + groupKeys.values.filter { !hot.contains($0) }.sorted()
-            let real = Set(all.map(\.0))
-            awake = hotKeys.filter(real.contains).count
-            if !all.isEmpty { s.tCPUAvg = all.map(\.1).reduce(0, +) / Double(all.count) }
+            hotKeys = hot + Set(groups.joined()).subtracting(hot).sorted()
+            awake = Set(all.map(\.0)).intersection(hotKeys)
+            avg = all.isEmpty ? nil : all.map(\.1).reduce(0, +) / Double(all.count)
             return all.map(\.1)
         }
-        // Scan again now when the followed ones have all gone dark, or when more of them read than
+        // Scan again now when the followed ones have all gone dark, or when one reads that did not
         // last time: a cluster woke, and its hottest sensor may be one not followed.
         var cpu: [Double]
         if ticks % 30 == 0 || hotKeys.isEmpty { cpu = scan() } else {
-            cpu = hotKeys.compactMap { smc.value($0) }.filter(Self.real)
-            if cpu.isEmpty || cpu.count > awake { cpu = scan() } else { awake = cpu.count }
+            let read = hotKeys.compactMap { k in smc.value(k).map { (k, $0) } }.filter { Self.real($0.1) }
+            let now = Set(read.map(\.0))
+            if read.isEmpty || !now.isSubset(of: awake) { cpu = scan() } else { cpu = read.map(\.1); awake = now }
         }
+        s.tCPUAvg = avg
         ticks += 1
         if !cpu.isEmpty { s.tCPU = cpu.max() }
         let gpu = stride(from: 0, to: gpuKeys.count, by: max(1, gpuKeys.count / 8)).compactMap { smc.value(gpuKeys[$0]) }.filter(Self.real)
