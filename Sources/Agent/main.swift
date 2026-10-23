@@ -129,18 +129,56 @@ func logForever() -> Never {
     let procLog = ProcLog()                     // the timeline's apps, one scan a minute (Timeline.swift)
     var bucket: [Snapshot] = []
     var minute = Int(Date().timeIntervalSince1970 / 60)
+    // The logger this one replaced saved the minute so far when it was stopped (below); a second row
+    // for the same minute would count it twice, so start with the next one.
+    var skipping = lastLoggedMinute() == minute
     let timer = DispatchSource.makeTimerSource(queue: .main)
     timer.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(2))
     _ = sampler.sample()
     timer.setEventHandler {
         let s = sampler.sample()
         let m = Int(s.t / 60)
+        if skipping { if m == minute { return }; skipping = false; minute = m }
         if m != minute, !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute); bucket = [] }
         minute = m
         bucket.append(s)
     }
     timer.resume()
+    // launchd stops the logger with SIGTERM when the app updates it: keep the minute so far (its
+    // `seconds` column says how much of it there is) rather than leave a hole in the day.
+    signal(SIGTERM, SIG_IGN)
+    let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    term.setEventHandler {
+        if !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute) }
+        exit(0)
+    }
+    term.resume()
+    signalSources.append(term)
     dispatchMain()
+}
+
+/// The minute of today's last row, from the end of the file.
+private func lastLoggedMinute() -> Int? {
+    let file = logDir.appendingPathComponent(dayFormat.string(from: Date()) + ".csv")
+    guard let h = try? FileHandle(forReadingFrom: file) else { return nil }
+    defer { try? h.close() }
+    let size = (try? h.seekToEnd()) ?? 0
+    try? h.seek(toOffset: size > 400 ? size - 400 : 0)
+    let tail = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
+    return tail.split(separator: "\n").last.flatMap { $0.split(separator: ",").first }.flatMap { Double($0) }.map { Int($0 / 60) }
+}
+
+let logHeader = "t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power"
+private var headerChecked = ""
+
+/// A day's file keeps the header it was started with; when an update adds columns mid-day, name them,
+/// so the file still reads right in Numbers or Excel. Checked once per file.
+private func upgradeHeader(_ file: URL) {
+    guard headerChecked != file.path else { return }
+    headerChecked = file.path
+    guard let text = try? String(contentsOf: file, encoding: .utf8), let nl = text.firstIndex(of: "\n"),
+          text[..<nl] != logHeader, logHeader.hasPrefix(text[..<nl]) else { return }
+    try? (logHeader + text[nl...]).write(to: file, atomically: true, encoding: .utf8)
 }
 
 func write(_ b: [Snapshot], minute: Int) {
@@ -154,10 +192,11 @@ func write(_ b: [Snapshot], minute: Int) {
         + BatteryCare.logColumns(b)     // battery %, power state (0 battery, 1 on power, 2 charging); -1 without a battery
     let line = cols.map { $0 == $0.rounded() ? String(Int($0)) : String(format: "%.2f", $0) }.joined(separator: ",") + "\n"
     let file = logDir.appendingPathComponent(dayFormat.string(from: Date(timeIntervalSince1970: t)) + ".csv")
+    upgradeHeader(file)
     if let h = try? FileHandle(forWritingTo: file) {
         h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
     } else {
-        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power\n" + line).write(to: file, atomically: true, encoding: .utf8)
+        try? (logHeader + "\n" + line).write(to: file, atomically: true, encoding: .utf8)
     }
     // Keep a year. Names start with the date, so the timeline's YYYY-MM-DD.procs.jsonl go with their CSV.
     if minute % 1440 == 0, let files = try? FileManager.default.contentsOfDirectory(atPath: logDir.path) {
@@ -180,7 +219,7 @@ func loadHistory(hours: Double) -> History {
             guard c.count >= 10 else { continue }
             wh += c[1] * c[9] / 3600; peak = max(peak, c[2]); n += 1
             if c[0] >= since {
-                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: c[5], fan: c[6], mem: c[7], swap: c[8],
+                rows.append(LogRow(t: c[0], w: c[1], wMax: c[2], cpu: c[3], gpu: c[4], temp: Sampler.real(c[5]) ? c[5] : nil, fan: c[6], mem: c[7], swap: c[8],
                                    free: c.count > 10 && c[10] > 0 ? c[10] : nil))
             }
         }

@@ -50,7 +50,10 @@ final class Sampler {
     private var cpuKeys: [String] = []
     private var gpuKeys: [String] = []
     private var ssdKey: String?
-    private var hotKeys: [String] = []      // the hottest CPU sensors at the last full scan
+    private var hotKeys: [String] = []      // the hottest CPU sensors at the last full scan, and one from each group
+    private var groupKeys: [String: String] = [:]   // each group's hottest sensor when last seen awake
+    private var awake: Set<String> = []     // which of hotKeys read a real temperature last sample
+    private var avg: Double?                // all CPU sensors' mean at the last full scan
     private var ticks = 0
     private var volumeCache: (Date, [Volume]) = (.distantPast, [])
     private lazy var hasBattery = !registryProperty("AppleSmartBattery", "CurrentCapacity").isEmpty
@@ -66,12 +69,13 @@ final class Sampler {
     init(procs: Bool) {
         withProcs = procs
         guard let smc else { return }
-        // Group the temperature sensors once by family; chips name them differently.
+        // Group the temperature sensors once by family; chips name them differently. Not by value: a
+        // sensor on a core that is asleep right now reads nothing real (see `real`).
         for k in smc.allKeys() where k.hasPrefix("T") {
-            guard let (type, _) = smc.bytes(k), type == "flt ", let v = smc.value(k), v > 10, v < 130 else { continue }
+            guard let (type, _) = smc.bytes(k), type == "flt " else { continue }
             let fam = String(k.prefix(2))
             if ["Tp", "Te", "Tm"].contains(fam) { cpuKeys.append(k) }
-            else if fam == "Tg" { gpuKeys.append(k) }
+            else if fam == "Tg", let v = smc.value(k), Self.real(v) { gpuKeys.append(k) }     // a sample of these is enough
         }
         ssdKey = smc.value("TH0x") != nil ? "TH0x" : nil
     }
@@ -145,19 +149,42 @@ final class Sampler {
         s.pressure = sysctlInt("kern.memorystatus_vm_pressure_level") ?? 1
     }
 
+    /// A sensor on a sleeping core reads a placeholder until the core wakes: exactly 40 °C, or a few
+    /// degrees either side of 0 (seen on an M4 Pro Mac mini). Averaged into a minute, those made the
+    /// log say 2 °C or 21 °C on a Mac at 50.
+    static func real(_ t: Double) -> Bool { t > 10 && t < 130 && t != 40 }
+
     private func sampleSensors(_ s: inout Snapshot) {
         guard let smc else { return }
-        // Reading every sensor costs ~0.2 ms each; scan them all every 30th sample and in between
-        // follow only the dozen that were hottest.
-        if ticks % 30 == 0 || hotKeys.isEmpty {
-            let all = cpuKeys.compactMap { k in smc.value(k).map { (k, $0) } }.filter { $0.1 > 1 }
-            hotKeys = all.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
-            if !all.isEmpty { s.tCPUAvg = all.map(\.1).reduce(0, +) / Double(all.count) }
+        // Reading every sensor costs ~0.2 ms each (114 of them on an M4 Pro); scan them all every 30th
+        // sample and in between follow the dozen that were hottest, plus one sensor from each group
+        // (Tp0, Tp1, Te0, ...). A cluster's sensors go dark together while its cores sleep, which can
+        // be the whole hottest dozen; the one from each group still sees a cluster that wakes up.
+        func scan() -> [Double] {
+            let all = cpuKeys.compactMap { k in smc.value(k).map { (k, $0) } }.filter { Self.real($0.1) }
+            for (k, _) in all.sorted(by: { $0.1 < $1.1 }) { groupKeys[String(k.prefix(3))] = k }    // the hottest awake one wins
+            // A group never seen awake: a few of its sensors, in case one of them is dead.
+            let groups = Dictionary(grouping: cpuKeys) { String($0.prefix(3)) }.map { g, ks in
+                groupKeys[g].map { [$0] } ?? stride(from: 0, to: ks.count, by: max(1, ks.count / 4)).map { ks[$0] }
+            }
+            let hot = all.sorted { $0.1 > $1.1 }.prefix(12).map(\.0)
+            hotKeys = hot + Set(groups.joined()).subtracting(hot).sorted()
+            awake = Set(all.map(\.0)).intersection(hotKeys)
+            avg = all.isEmpty ? nil : all.map(\.1).reduce(0, +) / Double(all.count)
+            return all.map(\.1)
         }
+        // Scan again now when the followed ones have all gone dark, or when one reads that did not
+        // last time: a cluster woke, and its hottest sensor may be one not followed.
+        var cpu: [Double]
+        if ticks % 30 == 0 || hotKeys.isEmpty { cpu = scan() } else {
+            let read = hotKeys.compactMap { k in smc.value(k).map { (k, $0) } }.filter { Self.real($0.1) }
+            let now = Set(read.map(\.0))
+            if read.isEmpty || !now.isSubset(of: awake) { cpu = scan() } else { cpu = read.map(\.1); awake = now }
+        }
+        s.tCPUAvg = avg
         ticks += 1
-        let cpu = hotKeys.compactMap { smc.value($0) }.filter { $0 > 1 }
         if !cpu.isEmpty { s.tCPU = cpu.max() }
-        let gpu = stride(from: 0, to: gpuKeys.count, by: max(1, gpuKeys.count / 8)).compactMap { smc.value(gpuKeys[$0]) }.filter { $0 > 1 }
+        let gpu = stride(from: 0, to: gpuKeys.count, by: max(1, gpuKeys.count / 8)).compactMap { smc.value(gpuKeys[$0]) }.filter(Self.real)
         if !gpu.isEmpty { s.tGPU = gpu.reduce(0, +) / Double(gpu.count) }
         if let k = ssdKey { s.tSSD = smc.value(k) }
         if let w = smc.value("PSTR"), w > 0 { s.wSystem = w }

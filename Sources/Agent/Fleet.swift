@@ -73,7 +73,7 @@ enum Fleet {
             if let line = tail.split(separator: "\n").last {
                 let c = line.split(separator: ",").compactMap { Double($0) }
                 if c.count >= 9 {
-                    s.t = c[0]; s.w = c[1]; s.cpu = c[3]; s.temp = c[5] > 0 ? c[5] : nil; s.mem = c[7]
+                    s.t = c[0]; s.w = c[1]; s.cpu = c[3]; s.temp = Sampler.real(c[5]) ? c[5] : nil; s.mem = c[7]
                     s.free = c.count > 10 && c[10] > 0 ? c[10] : nil
                 }
             }
