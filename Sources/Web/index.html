@@ -703,7 +703,8 @@ function seriesOf(h, key, range) {
   const span = [600, 3600, 86400, 86400 * 14][range], from = end - span;
   const hist = h.hist[RANGES[range === 0 ? 1 : range]];
   const mid = [30, 30, 150, 1800][range];
-  const pts = (hist?.rows || []).filter(r => r.t >= from && r[key] != null).map(r => ({ t: r.t + mid, v: r[key] }));
+  // A temperature of 0 is a minute the log has no reading for, not a cold Mac.
+  const pts = (hist?.rows || []).filter(r => r.t >= from && r[key] != null && !(key === 'temp' && !r[key])).map(r => ({ t: r.t + mid, v: r[key] }));
   const last = pts.length ? pts[pts.length - 1].t : from;
   const live = h.live.filter(p => p.t > last + 30 && p.t >= from && p[key] != null).map(p => ({ t: p.t, v: p[key] }));
   return { pts: pts.concat(live), from, end };

@@ -2,7 +2,7 @@ import Foundation
 
 // The wire format between the agent (on each Mac) and the menu bar app: one JSON object per line.
 
-let vitalsVersion = "1.1.1"
+let vitalsVersion = "1.1.2"
 
 struct Fan: Codable, Equatable {
     var rpm: Double

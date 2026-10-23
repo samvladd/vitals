@@ -22,8 +22,9 @@ func coarse(_ h: History, every step: Double) -> History {
     func flush() {
         guard let first = group.first else { return }
         func mean(_ k: KeyPath<LogRow, Double>) -> Double { group.reduce(0) { $0 + $1[keyPath: k] } / Double(group.count) }
+        let temps = group.map(\.temp).filter { $0 > 0 }       // 0 is a minute with no reading
         out.append(LogRow(t: (first.t / step).rounded(.down) * step, w: mean(\.w), wMax: group.map(\.wMax).max() ?? 0,
-                          cpu: mean(\.cpu), gpu: mean(\.gpu), temp: mean(\.temp), fan: mean(\.fan), mem: mean(\.mem), swap: mean(\.swap),
+                          cpu: mean(\.cpu), gpu: mean(\.gpu), temp: temps.isEmpty ? 0 : temps.reduce(0, +) / Double(temps.count), fan: mean(\.fan), mem: mean(\.mem), swap: mean(\.swap),
                           free: group.compactMap(\.free).last))
         group = []
     }

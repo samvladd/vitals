@@ -140,7 +140,30 @@ func logForever() -> Never {
         bucket.append(s)
     }
     timer.resume()
+    // launchd stops the logger with SIGTERM when the app updates it: keep the minute so far (its
+    // `seconds` column says how much of it there is) rather than leave a hole in the day.
+    signal(SIGTERM, SIG_IGN)
+    let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    term.setEventHandler {
+        if !bucket.isEmpty { write(bucket, minute: minute); procLog.record(minute: minute) }
+        exit(0)
+    }
+    term.resume()
+    signalSources.append(term)
     dispatchMain()
+}
+
+let logHeader = "t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power"
+private var headerChecked = ""
+
+/// A day's file keeps the header it was started with; when an update adds columns mid-day, name them,
+/// so the file still reads right in Numbers or Excel. Checked once per file.
+private func upgradeHeader(_ file: URL) {
+    guard headerChecked != file.path else { return }
+    headerChecked = file.path
+    guard let text = try? String(contentsOf: file, encoding: .utf8), let nl = text.firstIndex(of: "\n"),
+          text[..<nl] != logHeader, logHeader.hasPrefix(text[..<nl]) else { return }
+    try? (logHeader + text[nl...]).write(to: file, atomically: true, encoding: .utf8)
 }
 
 func write(_ b: [Snapshot], minute: Int) {
@@ -154,10 +177,11 @@ func write(_ b: [Snapshot], minute: Int) {
         + BatteryCare.logColumns(b)     // battery %, power state (0 battery, 1 on power, 2 charging); -1 without a battery
     let line = cols.map { $0 == $0.rounded() ? String(Int($0)) : String(format: "%.2f", $0) }.joined(separator: ",") + "\n"
     let file = logDir.appendingPathComponent(dayFormat.string(from: Date(timeIntervalSince1970: t)) + ".csv")
+    upgradeHeader(file)
     if let h = try? FileHandle(forWritingTo: file) {
         h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
     } else {
-        try? ("t,watts,watts_max,cpu,gpu,cpu_temp,fan_rpm,mem_used,swap_used,seconds,free,battery,power\n" + line).write(to: file, atomically: true, encoding: .utf8)
+        try? (logHeader + "\n" + line).write(to: file, atomically: true, encoding: .utf8)
     }
     // Keep a year. Names start with the date, so the timeline's YYYY-MM-DD.procs.jsonl go with their CSV.
     if minute % 1440 == 0, let files = try? FileManager.default.contentsOfDirectory(atPath: logDir.path) {
