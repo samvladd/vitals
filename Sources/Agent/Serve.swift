@@ -47,6 +47,7 @@ func serve() -> Never {
     let peer = peers.first
     if let p = option("--screen-port").flatMap(UInt16.init) { Screen.port = p }     // for tests; always 127.0.0.1
     if let s = option("--screen-idle").flatMap(Double.init), s >= 5 { Screen.idleLimit = s }
+    tailscaleStatusFile = option("--tailscale-status")                               // for tests
     let origins = Set((option("--allow-origin") ?? "").split(separator: ",").map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: " /")) })
     server = WebServer(listener: fd, peer: peer, origins: origins)
     server?.start()
@@ -108,10 +109,11 @@ func installServe() {
 // MARK: HTTP
 
 struct Request {
-    var method = "", path = "", query: [String: String] = [:], headers: [String: String] = [:], body = ""
+    var method = "", path = "", query: [String: String] = [:], headers: [String: String] = [:], raw = Data()
+    var body: String { String(decoding: raw, as: UTF8.self) }
 
-    /// nil while the request is still arriving.
-    init?(_ d: Data) {
+    /// nil while the request is still arriving; with `head`, once its headers have (the body left empty).
+    init?(_ d: Data, head: Bool = false) {
         guard let end = d.firstRange(of: Data("\r\n\r\n".utf8)) else { return nil }
         let lines = String(decoding: d[..<end.lowerBound], as: UTF8.self).components(separatedBy: "\r\n")
         let first = lines[0].split(separator: " ").map(String.init)
@@ -121,8 +123,8 @@ struct Request {
         }
         let length = Int(headers["content-length"] ?? "") ?? 0
         let rest = d[end.upperBound...]
-        guard rest.count >= length else { return nil }
-        body = String(decoding: rest.prefix(length), as: UTF8.self)
+        guard head || rest.count >= length else { return nil }
+        if !head { raw = Data(rest.prefix(length)) }
         guard first.count >= 2, let u = URLComponents(string: first[1]) else { return }
         method = first[0]; path = u.path
         for q in u.queryItems ?? [] { query[q.name] = q.value ?? "" }
@@ -136,7 +138,8 @@ final class Conn {
     var streaming = false
     var origin: String?
     var parsed = false                  // its request has fully arrived
-    let born = Date()
+    var lastRead = Date()
+    var vetted = false                  // a big request's headers have been checked
     private let source: DispatchSourceRead
 
     init(_ fd: Int32, onRead: @escaping (Conn, Data?) -> Void) {
@@ -223,9 +226,19 @@ final class WebServer {
         guard let d else { return drop(c) }          // closed by the other end
         if c.streaming { return }
         c.buf.append(d)
+        c.lastRead = Date()
         if let r = Request(c.buf) { c.buf = Data(); c.parsed = true; route(r, c) }
-        // Requests are small; a paste for the Mac's clipboard may be up to 1 MB.
-        else if c.buf.count > (c.buf.starts(with: Data("POST /screen/clipboard/write ".utf8)) ? Clipboard.maxBytes + 65536 : 65536) { drop(c) }
+        // Requests are small; a paste for the Mac's clipboard (with a picture) or a file dropped on the
+        // Screen page are bigger, up to their own limits.
+        else if c.buf.count > 65536 + (c.buf.starts(with: Data("POST /screen/clipboard/write ".utf8)) ? Clipboard.maxWrite
+                                       : c.buf.starts(with: Data("POST /screen/file?".utf8)) ? Upload.maxBytes : 0) { drop(c) }
+        // A big one is only kept arriving for a device allowed to send it, and only up to its limit.
+        else if c.buf.count > 65536, !c.vetted, let h = Request(c.buf, head: true) {
+            c.vetted = true
+            let limit = h.path == "/screen/file" ? Upload.maxBytes : Clipboard.maxWrite
+            guard case .allowed = Control.gate(h, change: true), h.headers["x-vitals"] == "1" else { return send(c, 403, json: #"{"error":"forbidden"}"#) }
+            if Int(h.headers["content-length"] ?? "") ?? 0 > limit { send(c, 413, json: #"{"error":"too big"}"#) }
+        }
     }
 
     private func drop(_ c: Conn) {
@@ -247,7 +260,7 @@ final class WebServer {
 
     private func send(_ c: Conn, _ status: Int, _ type: String, _ body: Data, cache: String = "no-store", extra: String = "") {
         let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 413: "Content Too Large",
-                      503: "Service Unavailable"][status] ?? ""
+                      503: "Service Unavailable", 507: "Insufficient Storage"][status] ?? ""
         let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
             + "Cache-Control: \(cache)\r\n\(cors(c))\(extra)Connection: close\r\n\r\n"
         c.write(Data(head.utf8) + body)
@@ -305,7 +318,7 @@ final class WebServer {
             BatteryCare.handle(r) { [weak self] code, body in self?.send(c, code, json: body) }
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
-             ("POST", "/screen/resolution"), ("POST", "/screen/clipboard/read"), ("POST", "/screen/clipboard/write"):
+             ("POST", "/screen/resolution"), ("POST", "/screen/clipboard/read"), ("POST", "/screen/clipboard/write"), ("GET", "/screen/link"), ("POST", "/screen/file"):
             screen(r, c)
         // Actions (Actions.swift): the count is all another Mac's page may read; the rest is gated there.
         case ("GET", "/actions/count"): send(c, 200, json: "{\"count\":\(Control.load() == nil ? 0 : Actions.load().count)}")
@@ -353,8 +366,9 @@ final class WebServer {
         if !watchers.isEmpty || SpaceScanner.shared.busy || !Screen.relays.isEmpty { lastBusy = now }
         if Actions.busy { lastBusy = now }
         Screen.housekeeping()
-        // A request still not complete after 10 s is someone holding a connection open: let it go.
-        for c in conns.values where !c.parsed && !c.streaming && now.timeIntervalSince(c.born) > 10 { drop(c) }
+        // A request that has sent nothing for 10 s before it is complete is someone holding a connection
+        // open: let it go. A big file still arriving is not.
+        for c in conns.values where !c.parsed && !c.streaming && now.timeIntervalSince(c.lastRead) > 10 { drop(c) }
         if driver.policy != "auto",
            now.timeIntervalSince(lastAlive) > Self.lease || emptySince.map({ now.timeIntervalSince($0) > Self.grace }) == true {
             driver.set("auto")
@@ -475,6 +489,9 @@ final class WebServer {
             let mode = fast ? Display.fast() : { Display.restore(); return nil }()
             send(c, 200, json: json(["fast": mode]))
         case "/screen/ws": upgrade(r, c, device: device)
+        case "/screen/link":                // for the speed box: direct, or through a relay
+            Link.path(of: r.headers["x-forwarded-for"] ?? "") { [weak self] p in self?.send(c, 200, json: json(p)) }
+        case "/screen/file": upload(r, c, device: device)
         case "/screen/clipboard/read", "/screen/clipboard/write":
             // Only for a device whose screen is open: it is that session's copy and paste.
             guard let session = Screen.session(of: device) else { return send(c, 409, json: #"{"error":"no screen session"}"#) }
@@ -482,10 +499,7 @@ final class WebServer {
                 session.sharedClipboard = true
                 Control.record("Clipboard shared with \(device) for its screen session")
             }
-            if r.path.hasSuffix("/write") {
-                guard r.body.utf8.count <= Clipboard.maxBytes else { return send(c, 413, json: #"{"error":"more than 1 MB"}"#) }
-                return send(c, 200, json: "{\"count\":\(Clipboard.set(r.body))}")
-            }
+            if r.path.hasSuffix("/write") { return clipboardWrite(r, c) }
             // Read: an empty body is "what is the count now"; a count waits until the clipboard is not that.
             guard let after = Int(r.body.trimmingCharacters(in: .whitespacesAndNewlines)) else { return send(c, 200, json: Clipboard.reply(false)) }
             clipboardWait(c, device: device, after: after, until: Date(timeIntervalSinceNow: 20))
@@ -496,6 +510,51 @@ final class WebServer {
                 + (gz ? "Content-Encoding: gzip\r\n" : "") + "Cache-Control: private, max-age=31536000, immutable\r\nConnection: close\r\n\r\n"
             c.write(Data(head.utf8) + (gz ? WebAssets.novncGz : WebAssets.novnc))
             drop(c)
+        }
+    }
+
+    /// The page's paste: plain text as the body, or JSON {text, html, png} (the picture in base64).
+    private func clipboardWrite(_ r: Request, _ c: Conn) {
+        guard (r.headers["content-type"] ?? "").hasPrefix("application/json") else {
+            guard r.raw.count <= Clipboard.maxBytes else { return send(c, 413, json: #"{"error":"more than 1 MB of text"}"#) }
+            return send(c, 200, json: "{\"count\":\(Clipboard.set(text: r.body, html: nil, png: nil))}")
+        }
+        struct Paste: Decodable { var text: String?, html: String?, png: String? }
+        guard let p = try? JSONDecoder().decode(Paste.self, from: r.raw), p.text != nil || p.html != nil || p.png != nil else {
+            return send(c, 400, json: #"{"error":"text, html or png"}"#)
+        }
+        guard (p.text?.utf8.count ?? 0) <= Clipboard.maxBytes, (p.html?.utf8.count ?? 0) <= Clipboard.maxBytes else {
+            return send(c, 413, json: #"{"error":"more than 1 MB of text"}"#)
+        }
+        var png: Data?
+        if let b = p.png {
+            guard let d = Data(base64Encoded: b) else { return send(c, 400, json: #"{"error":"png is not base64"}"#) }
+            guard d.count <= Clipboard.maxImage else { return send(c, 413, json: #"{"error":"a picture over 8 MB"}"#) }
+            guard let converted = Clipboard.png(d) else { return send(c, 400, json: #"{"error":"not a picture"}"#) }
+            png = converted
+        }
+        send(c, 200, json: "{\"count\":\(Clipboard.set(text: p.text, html: p.html, png: png))}")
+    }
+
+    /// A file dropped on the page: `POST /screen/file?name=NAME` with the file as the body, saved in
+    /// ~/Downloads. Like the clipboard, only while that device's screen is open.
+    private func upload(_ r: Request, _ c: Conn, device: String) {
+        guard Screen.session(of: device) != nil else { return send(c, 409, json: #"{"error":"no screen session"}"#) }
+        guard !r.raw.isEmpty else { return send(c, 400, json: #"{"error":"empty file"}"#) }
+        guard r.raw.count <= Upload.maxBytes else { return send(c, 413, json: #"{"error":"more than 100 MB"}"#) }
+        let data = r.raw, asked = r.query["name"] ?? ""
+        DispatchQueue.global(qos: .userInitiated).async {
+            let (name, error) = Upload.save(data, as: asked)
+            DispatchQueue.main.async { [weak self] in
+                let size = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                if let name {
+                    Control.record("Received \(name) (\(size)) from \(device), saved to Downloads")
+                    self?.send(c, 200, json: json(["name": name, "bytes": String(data.count)]))
+                } else {
+                    Control.record("A file from \(device) (\(size)) wasn't saved: \(error ?? "")", "failed")
+                    self?.send(c, 507, json: json(["error": error]))
+                }
+            }
         }
     }
 
@@ -511,7 +570,7 @@ final class WebServer {
         }
         if Clipboard.count != after {
             // An app copying empties the clipboard, then writes to it: caught in between, look once more.
-            if !settling, NSPasteboard.general.string(forType: .string) == nil { return next(true, 0.1) }
+            if !settling, Clipboard.settling { return next(true, 0.1) }
             return send(c, 200, json: Clipboard.reply(true))
         }
         if Date() >= until { return send(c, 200, json: Clipboard.reply(false)) }
