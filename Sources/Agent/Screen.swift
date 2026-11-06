@@ -15,7 +15,8 @@ import Foundation
 // sessions at a time.
 //
 // Copy and paste go through this Mac's own clipboard (Clipboard, below), read and set by this process
-// for the page: Screen Sharing passes it to a browser unreliably, if at all.
+// for the page: Screen Sharing passes it to a browser unreliably, if at all. A file dropped on the page
+// lands in ~/Downloads (Upload), and the speed box can say how Tailscale carries the session (Link).
 
 enum Screen {
     static var idleLimit = 600.0               // --screen-idle, for tests
@@ -247,26 +248,181 @@ final class ScreenRelay {
 
 /// The page's Copy and Paste. Paste sets this Mac's clipboard to what the page sends and the page then
 /// presses ⌘V on the Mac; Copy waits for this Mac's clipboard to change (after the page's ⌘C, or a
-/// Copy from a menu on the Mac) and hands the text back. Plain text only, up to 1 MB.
+/// Copy from a menu on the Mac) and hands it back. Text, rich text (as HTML) and pictures (as PNG):
+/// text and HTML up to 1 MB each, a picture up to 8 MB.
 enum Clipboard {
     static let maxBytes = 1 << 20
+    static let maxImage = 8 << 20
+    /// The largest write the page can send: JSON with all three, the picture in base64.
+    static let maxWrite = maxImage / 3 * 4 + 3 * maxBytes
     static var count: Int { NSPasteboard.general.changeCount }
 
-    /// {"count": N}, with the text when it is text and not too big.
-    static func reply(_ withText: Bool) -> String {
-        struct Reply: Encodable { var count: Int, text: String?, skipped: String? }
-        let pb = NSPasteboard.general, n = pb.changeCount
-        guard withText else { return json(Reply(count: n, text: nil, skipped: nil)) }
-        guard let s = pb.string(forType: .string) else { return json(Reply(count: n, text: nil, skipped: "not text")) }
-        guard s.utf8.count <= maxBytes else { return json(Reply(count: n, text: nil, skipped: "too big")) }
-        return json(Reply(count: n, text: s, skipped: nil))
+    struct Reply: Encodable { var count: Int, text: String?, html: String?, png: String?, skipped: String? }
+
+    /// {"count": N}, with what is on the clipboard when asked and not too big: text, HTML, a PNG (base64).
+    static func reply(_ withContent: Bool) -> String {
+        let pb = NSPasteboard.general
+        var r = Reply(count: pb.changeCount, text: nil, html: nil, png: nil, skipped: nil)
+        guard withContent else { return json(r) }
+        var tooBig = false
+        if let s = pb.string(forType: .string) { if s.utf8.count <= maxBytes { r.text = s } else { tooBig = true } }
+        if r.text != nil, let h = html(pb), h.utf8.count <= maxBytes { r.html = h }
+        if let png = image(pb) { if png.count <= maxImage { r.png = png.base64EncodedString() } else { tooBig = true } }
+        if r.text == nil, r.png == nil { r.html = nil; r.skipped = tooBig ? "too big" : "not text or a picture" }
+        return json(r)
     }
 
-    static func set(_ text: String) -> Int {
+    /// HTML as copied from a browser, or rich text (TextEdit, Notes, Pages) turned into HTML.
+    private static func html(_ pb: NSPasteboard) -> String? {
+        if let h = pb.string(forType: .html) { return h }
+        guard let rtf = pb.data(forType: .rtf), rtf.count <= maxBytes,
+              let a = NSAttributedString(rtf: rtf, documentAttributes: nil),
+              let d = try? a.data(from: NSRange(location: 0, length: a.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.html])
+        else { return nil }
+        return String(decoding: d, as: UTF8.self)
+    }
+
+    /// A picture on the clipboard as PNG. Not a file copied in Finder: its picture is only the file's icon.
+    private static func image(_ pb: NSPasteboard) -> Data? {
+        if pb.types?.contains(.fileURL) == true { return nil }
+        if let png = pb.data(forType: .png) { return png }
+        guard let tiff = pb.data(forType: .tiff) else { return nil }
+        return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+    }
+
+    /// The page's paste, already checked: replaces what is on the clipboard with all of it at once.
+    static func set(text: String?, html: String?, png: Data?) -> Int {
+        let item = NSPasteboardItem()
+        if let text { item.setString(text, forType: .string) }
+        if let html { item.setString(html, forType: .html) }
+        if let png { item.setData(png, forType: .png) }
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(text, forType: .string)
+        pb.writeObjects([item])
         return pb.changeCount
+    }
+
+    /// Any picture a browser hands over (PNG, JPEG, GIF, HEIC...) as PNG; nil when it isn't one.
+    static func png(_ d: Data) -> Data? {
+        if d.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return d }
+        return NSBitmapImageRep(data: d)?.representation(using: .png, properties: [:])
+    }
+
+    /// An app copying empties the clipboard, then fills it: true in between.
+    static var settling: Bool { NSPasteboard.general.types?.isEmpty ?? true }
+}
+
+// MARK: The speed box: how this device reaches the Mac
+
+/// Whether Tailscale carries this device's traffic straight to the Mac (and whether over the same
+/// network), through a peer relay, or through a DERP relay server, which is slower. From
+/// `tailscale status --json`, asked at most every 5 s: an answer is never waited for once one is known.
+enum Link {
+    struct Path: Encodable { var via: String; var lan: Bool? = nil; var region: String? = nil }    // via: direct, peer relay, DERP, unknown
+
+    private static var cache: (Date, [String: Any])?
+    private static var asking = false
+    private static var waiting: [() -> Void] = []
+
+    /// Main queue. `device` is the tailnet address Tailscale gives in X-Forwarded-For.
+    static func path(of device: String, _ done: @escaping (Path) -> Void) {
+        if let (t, status) = cache {
+            done(path(of: device, in: status))
+            if Date().timeIntervalSince(t) > 5 { refresh() }
+        } else {
+            waiting.append { done(path(of: device, in: cache?.1 ?? [:])) }
+            refresh()
+        }
+    }
+
+    private static func refresh() {
+        guard !asking else { return }
+        asking = true
+        DispatchQueue.global(qos: .utility).async {
+            let status = tailscaleStatus() ?? [:]
+            DispatchQueue.main.async {
+                cache = (Date(), status); asking = false
+                let w = waiting; waiting = []
+                for f in w { f() }
+            }
+        }
+    }
+
+    static func path(of device: String, in status: [String: Any]) -> Path {
+        let peers = (status["Peer"] as? [String: [String: Any]] ?? [:]).values
+        guard let p = peers.first(where: { ($0["TailscaleIPs"] as? [String] ?? []).contains(device) }) else { return Path(via: "unknown") }
+        if let addr = p["CurAddr"] as? String, !addr.isEmpty { return Path(via: "direct", lan: isLocal(addr)) }
+        if let r = p["PeerRelay"] as? String, !r.isEmpty { return Path(via: "peer relay") }
+        let region = p["Relay"] as? String
+        return Path(via: "DERP", region: region?.isEmpty == false ? region : nil)
+    }
+
+    /// "192.168.1.20:41641" or "[fd7a::1]:41641": an address on a private network, so the same one as the Mac.
+    static func isLocal(_ addr: String) -> Bool {
+        let host = addr.hasPrefix("[") ? String(addr.dropFirst().prefix { $0 != "]" }) : String(addr.split(separator: ":").first ?? "")
+        if host.contains(":") { let h = host.lowercased(); return h.hasPrefix("fe80") || h.hasPrefix("fc") || h.hasPrefix("fd") }
+        let o = host.split(separator: ".").compactMap { Int($0) }
+        guard o.count == 4 else { return false }
+        return o[0] == 10 || (o[0] == 172 && (16...31).contains(o[1])) || (o[0] == 192 && o[1] == 168) || (o[0] == 169 && o[1] == 254)
+    }
+}
+
+// MARK: Files dropped on the page
+
+/// A file dropped onto the Screen page (or picked on a phone) is saved in ~/Downloads on the Mac, under
+/// its own name made safe (no folders, no hidden names, nothing that renders backwards), never over
+/// an existing file, and marked as downloaded so macOS checks it before it opens, as for a browser's.
+enum Upload {
+    static let maxBytes = 100 << 20
+    static var folder: URL { URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads") }
+
+    static func safeName(_ raw: String) -> String {
+        // The last part of a path (a phone's, a PC's), and ":" as "-": Finder shows a ":" in a name as "/".
+        let last = (raw.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? "").replacingOccurrences(of: ":", with: "-")
+        // No control characters, and none of Unicode's invisible format ones (a right-to-left override
+        // makes "photo\u{202E}gpj.app" read as "photoppa.jpg").
+        var s = String(String.UnicodeScalarView(last.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) && $0.properties.generalCategory != .format }))
+        s = s.trimmingCharacters(in: .whitespaces)
+        while s.hasPrefix(".") { s.removeFirst() }
+        s = s.trimmingCharacters(in: .whitespaces)
+        if s.isEmpty { s = "file" }
+        // At most 200 bytes, keeping the extension (macOS allows 255).
+        let ext = (s as NSString).pathExtension, base = (s as NSString).deletingPathExtension
+        if s.utf8.count > 200 {
+            let keep = ext.utf8.count < 20 ? ext : ""
+            var b = keep.isEmpty ? s : base
+            while b.utf8.count > 200 - (keep.isEmpty ? 0 : keep.utf8.count + 1) { b.removeLast() }
+            s = keep.isEmpty ? b : b + "." + keep
+        }
+        return s
+    }
+
+    /// Off the main queue. The name it was saved as, or why not.
+    static func save(_ data: Data, as raw: String) -> (name: String?, error: String?) {
+        let name = safeName(raw)
+        let ext = (name as NSString).pathExtension, base = (name as NSString).deletingPathExtension
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for i in 0..<1000 {
+            let candidate = i == 0 ? name : "\(base) (\(i))" + (ext.isEmpty ? "" : "." + ext)
+            let path = folder.appendingPathComponent(candidate).path
+            let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+            if fd < 0 { if errno == EEXIST { continue }; return (nil, "Couldn't save in Downloads on the Mac.") }
+            let ok = data.withUnsafeBytes { p -> Bool in
+                var off = 0
+                while off < p.count {
+                    let w = write(fd, p.baseAddress! + off, p.count - off)
+                    if w <= 0 { return false }
+                    off += w
+                }
+                return true
+            }
+            close(fd)
+            guard ok else { unlink(path); return (nil, "Couldn't save in Downloads on the Mac (is the disk full?).") }
+            let q = String(format: "0081;%08x;Vitals;%@", Int(Date().timeIntervalSince1970), UUID().uuidString)
+            _ = q.withCString { setxattr(path, "com.apple.quarantine", $0, strlen($0), 0, 0) }
+            return (candidate, nil)
+        }
+        return (nil, "Too many files with that name in Downloads.")
     }
 }
 

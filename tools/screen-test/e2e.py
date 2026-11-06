@@ -18,15 +18,19 @@ What it does, with nothing but the Python standard library:
      checks what fake_vnc received and how the relay ends sessions.
   5. Measures input round trip through the relay (N samples, p50/p95), against a direct connection to
      fake_vnc as a baseline, and server->page throughput with pipelined full-screen updates.
-  6. Tests POST /screen/clipboard/read and /write (skipped if they return 404). These use this Mac's
-     real clipboard: its text is saved with pbpaste first and put back with pbcopy at the end (plain
-     text only: an image or rich text on the clipboard comes back as its plain text, or empty). If
-     someone copies on this Mac mid-run, their copy is left in place and its text is never printed.
+  6. Tests POST /screen/clipboard/read and /write (skipped if they return 404): text, HTML, rich text,
+     pictures. These use this Mac's real clipboard: all of it (every item, every type, pictures
+     included) is saved first with pb.swift, compiled into the temp folder, and put back at the end;
+     without swiftc, only its text (pbpaste/pbcopy). If someone copies on this Mac mid-run, their copy
+     is left in place and its text is never printed.
+  7. GET /screen/link (how Tailscale carries the session) against saved `tailscale status --json`
+     files (--tailscale-status), and POST /screen/file (a file dropped on the page) into the throwaway
+     home's Downloads, never the real one.
 
 Results: PASS, FAIL (exit status 1), WARN (a finding against the intended behaviour, reported but not
 fatal), SKIP, NOTE (measurements). --quick skips the 20 s clipboard timeout; --keep keeps the temp folder.
 """
-import argparse, base64, hashlib, json, os, queue, shutil, socket, struct, subprocess, sys, tempfile, threading, time, uuid
+import argparse, base64, hashlib, json, os, plistlib, queue, shutil, socket, struct, subprocess, sys, tempfile, threading, time, urllib.parse, uuid, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HOST = "vitals-e2e.tail00000.ts.net"
@@ -128,6 +132,8 @@ class Agent:
             j = json.loads(b)
         except ValueError:
             return st, b
+        if path == "/screen/clipboard/write" and st == 200 and isinstance(j, dict):
+            MINE[0] = j.get("count")
         # Never print or keep text someone else copied on this Mac while the test ran.
         if isinstance(j, dict) and isinstance(j.get("text"), str) and j["text"].encode() not in OURS:
             j["text"] = "<%d chars copied outside this test>" % len(j["text"])
@@ -516,15 +522,73 @@ def real_state():
 
 
 OURS = set()     # every text this run put on the clipboard, so a copy made by someone else is told apart
+MINE = [None]    # the clipboard's change count after this run's last write, when known
+
+
+class PB:
+    """pb.swift, compiled into the temp folder: the whole clipboard (pictures, rich text), not only its text."""
+
+    def __init__(self, home):
+        self.dir = home
+        self.bin = os.path.join(home, "pb")
+        r = subprocess.run(["swiftc", "-O", "-o", self.bin, os.path.join(HERE, "pb.swift")], capture_output=True)
+        self.ok = r.returncode == 0
+        self.why = r.stderr.decode("utf-8", "replace")[-200:]
+        self.n = 0
+
+    def run(self, *a):
+        return subprocess.run([self.bin, *a], capture_output=True)
+
+    def count(self):
+        return int(self.run("count").stdout or -1)
+
+    def set(self, **types):
+        """pb.set(**{"public.png": b"..."}): one item with exactly these types; returns the change count."""
+        args = []
+        for t, v in types.items():
+            self.n += 1
+            f = os.path.join(self.dir, "pb-%d" % self.n)
+            open(f, "wb").write(v if isinstance(v, bytes) else v.encode())
+            args.append("%s=%s" % (t, f))
+        c = int(self.run("set", *args).stdout)
+        MINE[0] = c
+        return c
+
+    def get(self, t):
+        r = self.run("get", t)
+        return r.stdout if r.returncode == 0 else None
+
+
+PBX = None       # a PB once built
+PBX_WHY = [""]
+
+
+def save_clipboard(tag):
+    """This Mac's clipboard as it is now: its text, and all of it when pb is built."""
+    path = None
+    if PBX:
+        path = os.path.join(PBX.dir, "clipboard-%s.plist" % tag)
+        if PBX.run("save", path).returncode != 0:
+            path = None
+    return pbpaste(), path
 
 
 def restore_clipboard(before, label):
-    """Put the saved text back, unless someone copied something else meanwhile: then leave theirs."""
+    """Put the saved clipboard back, unless someone copied something else meanwhile: then leave theirs."""
+    text, path = before
     cur = pbpaste()
-    if cur != before and cur not in OURS:
+    theirs = (PBX.count() != MINE[0]) if PBX and MINE[0] is not None else cur not in OURS
+    if cur != text and theirs:
         return note(label, "someone copied on this Mac during the test (%d bytes): left that in place" % len(cur))
-    pbcopy(before)
-    check(label, pbpaste() == before, "%d bytes" % len(before))
+    if path:
+        PBX.run("restore", path)
+        now = os.path.join(PBX.dir, "clipboard-now.plist")
+        PBX.run("save", now)
+        same = plistlib.load(open(path, "rb")) == plistlib.load(open(now, "rb"))
+        types = sorted({t for item in plistlib.load(open(path, "rb")) for t in item})
+        return check(label + " (every type)", same and pbpaste() == text, "%d bytes of text; types %s" % (len(text), ", ".join(types)[:160] or "none"))
+    pbcopy(text)
+    check(label, pbpaste() == text, "%d bytes" % len(text))
 
 
 def pbpaste():
@@ -536,6 +600,30 @@ def pbcopy(data):
         data = data.encode()
     OURS.add(data)
     subprocess.run(["pbcopy"], input=data, check=True)
+    if PBX:
+        MINE[0] = PBX.count()
+
+
+def png_bytes(w=4, h=3, rgb=(200, 30, 60)):
+    """A small real PNG, built by hand."""
+    raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def png_size(d):
+    return struct.unpack(">II", d[16:24]) if d and d.startswith(b"\x89PNG") else None
+
+
+def converted(png, fmt, folder):
+    """The PNG as another format (jpeg, tiff), through sips."""
+    src, dst = os.path.join(folder, "src.png"), os.path.join(folder, "out." + fmt)
+    open(src, "wb").write(png)
+    subprocess.run(["sips", "-s", "format", fmt, src, "--out", dst], capture_output=True, check=True)
+    return open(dst, "rb").read()
 
 # ---------------------------------------------------------------------------------------------- tests
 
@@ -844,11 +932,15 @@ def test_clipboard(agent, fake, args):
     check("read without a screen session -> 409", st == 409 and isinstance(body, dict) and body.get("error") == "no screen session", "%s %s" % (st, body))
     st, body = agent.json("POST", "/screen/clipboard/write", "nope", DEV_B)
     check("write without a screen session -> 409", st == 409, "%s %s" % (st, body))
-    before = pbpaste()
+    before = save_clipboard("before")
     try:
         _clipboard_tests(agent, args)
+        if PBX:
+            _rich_clipboard_tests(agent, args)
+        else:
+            skip("pictures and rich text on the clipboard", "pb.swift didn't build: " + PBX_WHY[0])
     finally:
-        restore_clipboard(before, "clipboard put back as it was (pbpaste matches)")
+        restore_clipboard(before, "clipboard put back as it was")
 
 
 def _clipboard_tests(agent, args):
@@ -993,13 +1085,301 @@ def _clipboard_tests(agent, args):
           st == 200 and body == {"count": c1} and 18 <= took <= 23, "%s %s after %.1f s" % (st, body, took))
 
 
+def _rich_clipboard_tests(agent, args):
+    """HTML, rich text and pictures, both ways: set on the clipboard with pb, read and written by the agent."""
+    section("Clipboard: pictures and rich text")
+    J = {"Content-Type": "application/json"}
+
+    def write(obj, **over):
+        return agent.json("POST", "/screen/clipboard/write", json.dumps(obj), timeout=30, **dict(J, **over))
+
+    def read_after(count):
+        return agent.json("POST", "/screen/clipboard/read", str(count), timeout=30)
+
+    # Page -> Mac: text and HTML together.
+    text = "rich paste %s" % uuid.uuid4()
+    html = "<meta charset=utf-8><b>rich</b> paste <i>%s</i> café" % text[-8:]
+    OURS.add(text.encode())
+    st, body = write({"text": text, "html": html})
+    check("write {text, html} -> 200 {count}", st == 200 and isinstance(body, dict) and "count" in body, "%s %s" % (st, body))
+    c = body.get("count", 0) if isinstance(body, dict) else 0
+    check("both on the Mac's clipboard: public.html and the plain text", PBX.get("public.html") == html.encode() and pbpaste() == text.encode(),
+          repr((PBX.get("public.html") or b"")[:60]))
+    st, body = read_after(c - 1)
+    check("read -> text and html", st == 200 and body.get("text") == text and body.get("html") == html and "png" not in body, str(body)[:120])
+
+    # Page -> Mac: a picture alone, then a JPEG (turned into PNG), then wrong ones.
+    png = png_bytes(5, 4)
+    st, body = write({"png": base64.b64encode(png).decode()})
+    check("write {png} -> 200", st == 200 and "count" in body, "%s %s" % (st, body))
+    check("the PNG is on the Mac's clipboard, byte for byte", PBX.get("public.png") == png, "%s bytes" % len(PBX.get("public.png") or b""))
+    check("no stale text left beside the picture", PBX.get("public.utf8-plain-text") is None, repr(pbpaste()[:40]))
+    st, body = read_after(body.get("count", 1) - 1)
+    check("read -> the PNG back (base64), no text", st == 200 and body.get("png") and base64.b64decode(body["png"]) == png and "text" not in body and "skipped" not in body,
+          str(body)[:120])
+    jpg = converted(png_bytes(8, 6, (10, 120, 240)), "jpeg", args.home)
+    st, body = write({"png": base64.b64encode(jpg).decode(), "text": "a caption"})
+    on = PBX.get("public.png")
+    check("write a JPEG -> stored as PNG, same size", st == 200 and png_size(on) == (8, 6) and pbpaste() == b"a caption", "%s %s" % (st, png_size(on)))
+    OURS.add(b"a caption")
+    for name, obj, want in [("png not base64 -> 400", {"png": "not base64!!"}, 400),
+                            ("png that isn't a picture -> 400", {"png": base64.b64encode(b"hello, not an image").decode()}, 400),
+                            ("nothing to paste {} -> 400", {}, 400),
+                            ("html over 1 MB -> 413", {"text": "x", "html": "h" * ((1 << 20) + 1)}, 413),
+                            ("text over 1 MB -> 413", {"text": "t" * ((1 << 20) + 1)}, 413),
+                            ("a picture over 8 MB -> 413", {"png": base64.b64encode(os.urandom((8 << 20) + 1)).decode()}, 413)]:
+        before = PBX.count()
+        st, body = write(obj)
+        check("write " + name + ", clipboard unchanged", st == want and PBX.count() == before, "%s %s" % (st, str(body)[:80]))
+    st, body = agent.json("POST", "/screen/clipboard/write", json.dumps({"png": base64.b64encode(png).decode()}), timeout=10,
+                          Content_Type="application/json", Origin="https://evil.example.com")
+    check("rich write from another Origin -> 403", st == 403, str(st))
+    st, body = agent.json("POST", "/screen/clipboard/write", json.dumps({"text": "x"}), DEV_B, Content_Type="application/json")
+    check("rich write without a screen session -> 409", st == 409, str(st))
+
+    # Mac -> page: what apps put there.
+    c = PBX.set(**{"public.tiff": converted(png_bytes(7, 3), "tiff", args.home)})
+    st, body = read_after(c - 1)
+    check("a TIFF on the clipboard (Preview, some apps) -> read as PNG", st == 200 and png_size(base64.b64decode(body.get("png") or "")) == (7, 3), str(body)[:100])
+    rtf = r"{\rtf1\ansi\deff0{\fonttbl{\f0 Helvetica;}}\f0 plain {\b boldword} end}"
+    c = PBX.set(**{"public.rtf": rtf, "public.utf8-plain-text": "plain boldword end"})
+    OURS.add(b"plain boldword end")
+    st, body = read_after(c - 1)
+    h = (body.get("html") or "") if isinstance(body, dict) else ""
+    check("rich text (RTF, from TextEdit or Notes) -> read as HTML with its bold", st == 200 and body.get("text") == "plain boldword end" and "boldword" in h and ("<b>" in h or "font-weight: bold" in h),
+          h[:160].replace("\n", " "))
+    icon = converted(png_bytes(16, 16), "tiff", args.home)
+    copied = os.path.join(args.home, "vitals-e2e-copied-in-finder.txt")     # macOS drops a file URL to nothing
+    open(copied, "w").write("a file")
+    c = PBX.set(**{"public.file-url": "file://" + urllib.parse.quote(copied), "public.tiff": icon, "public.utf8-plain-text": "vitals-e2e-copied-in-finder.txt"})
+    OURS.add(b"vitals-e2e-copied-in-finder.txt")
+    st, body = read_after(c - 1)
+    check("a file copied in Finder -> its name, not its icon as a picture", st == 200 and body.get("text") == "vitals-e2e-copied-in-finder.txt" and "png" not in body, str(body)[:100])
+    c = PBX.set(**{"public.png": os.urandom((8 << 20) + 16)})
+    st, body = read_after(c - 1)
+    check("a picture over 8 MB -> skipped: too big", st == 200 and body.get("skipped") == "too big" and "png" not in body, str(body)[:100])
+    c = PBX.set(**{"com.example.vitals-e2e": b"\x00\x01"})
+    st, body = read_after(c - 1)
+    check("nothing readable -> skipped: not text or a picture", st == 200 and body.get("skipped") == "not text or a picture", str(body)[:100])
+
+    # A waiting read answered by a picture copied on the Mac (the page's Copy of an image).
+    c = agent.json("POST", "/screen/clipboard/read")[1]["count"]
+    res = {}
+    th = threading.Thread(target=lambda: res.setdefault("r", read_after(c)))
+    th.start()
+    time.sleep(0.4)
+    shot = png_bytes(9, 9, (1, 2, 3))
+    t = time.monotonic()
+    PBX.set(**{"public.png": shot})
+    th.join(25)
+    took = time.monotonic() - t
+    st, body = res.get("r", (None, None))
+    check("waiting read returns a picture copied on the Mac", st == 200 and isinstance(body, dict) and body.get("png") and base64.b64decode(body["png"]) == shot,
+          "%s %s" % (st, str(body)[:80]))
+    note("picture copied -> waiting read answered", "%.0f ms" % (took * 1000))
+
+
+# ---------------------------------------------------------------------------------------------- how Tailscale carries it
+
+def tailscale_fixture(devices):
+    """A saved `tailscale status --json` with these peers: {address: (CurAddr, Relay, PeerRelay)}."""
+    peers = {}
+    for i, (addr, (cur, relay, peer_relay)) in enumerate(devices.items()):
+        peers["nodekey:%d" % i] = {"DNSName": "device-%d.tail00000.ts.net." % i, "HostName": "device-%d" % i, "OS": "iOS",
+                                   "Online": True, "UserID": 1, "TailscaleIPs": [addr, "fd7a:115c:a1e0::%d" % (i + 9)],
+                                   "CurAddr": cur, "Relay": relay, "PeerRelay": peer_relay}
+    return {"Self": {"DNSName": HOST + ".", "HostName": "vitals-e2e", "OS": "macOS", "UserID": 1, "TailscaleIPs": ["100.64.0.1"]},
+            "User": {"1": {"LoginName": LOGIN}}, "Peer": peers}
+
+
+def test_link(agent, args):
+    section("Speed box: GET /screen/link (direct, peer relay or DERP)")
+    st, body = agent.json("GET", "/screen/link")
+    if st == 404:
+        return skip("link", "GET /screen/link returned 404 (not in this build)")
+    check("this device direct over the same network -> {via: direct, lan: true}", st == 200 and body == {"via": "direct", "lan": True}, "%s %s" % (st, body))
+    st, body = agent.json("GET", "/screen/link", device=DEV_B)
+    check("a device through DERP -> {via: DERP, region}", st == 200 and body == {"via": "DERP", "region": "fra"}, "%s %s" % (st, body))
+    st, body = agent.json("GET", "/screen/link", device=DEV_C)
+    check("a device through a peer relay -> {via: peer relay}", st == 200 and body == {"via": "peer relay"}, "%s %s" % (st, body))
+    for name, over in [("device not on the list", dict(device="100.64.0.99")), ("cross-site", dict(Sec_Fetch_Site="cross-site")),
+                       ("wrong account", dict(Tailscale_User_Login="someone@else.com"))]:
+        st, _ = agent.json("GET", "/screen/link", **over)
+        check("link refused: %s -> 403" % name, st == 403, str(st))
+    # Tailscale changes its mind (a direct path found over the internet, a device gone): seen within ~5 s.
+    json.dump(tailscale_fixture({DEV_A: ("[2001:db8::5]:41641", "fra", ""), DEV_B: ("", "", "")}), open(args.ts_status, "w"))
+    t = time.monotonic()
+    first = agent.json("GET", "/screen/link")[1]
+    seen = None
+    while time.monotonic() - t < 9:
+        time.sleep(0.25)
+        st, body = agent.json("GET", "/screen/link")
+        if body == {"via": "direct", "lan": False}:
+            seen = time.monotonic() - t
+            break
+    check("answers at once from what it knows, then sees the change within ~5 s", first == {"via": "direct", "lan": True} and seen is not None and seen < 7,
+          "first %s; new answer after %s s" % (first, "%.1f" % seen if seen else "never"))
+    st, body = agent.json("GET", "/screen/link", device=DEV_B)
+    check("DERP with no region known -> {via: DERP}", body == {"via": "DERP"}, str(body))
+    st, body = agent.json("GET", "/screen/link", device=DEV_C)
+    check("a device Tailscale doesn't list -> {via: unknown}", st == 200 and body == {"via": "unknown"}, "%s %s" % (st, body))
+
+
+# ---------------------------------------------------------------------------------------------- files dropped on the page
+
+def test_upload(agent, args, real_names):
+    section("Files: POST /screen/file into Downloads")
+    dl = os.path.join(args.home, "Downloads")
+    tag = uuid.uuid4().hex[:8]
+
+    def post(name, data, device=DEV_A, timeout=30, **over):
+        return agent.json("POST", "/screen/file?name=" + urllib.parse.quote(name, safe=""), data, device, timeout,
+                          **dict({"Content-Type": "application/octet-stream"}, **over))
+    st, body = post("vitals-e2e-x.txt", b"x", DEV_B)
+    if st == 404:
+        return skip("files", "POST /screen/file returned 404 (not in this build)")
+    check("file without a screen session -> 409", st == 409, "%s %s" % (st, body))
+    for name, over, want in [("no X-Vitals", dict(X_Vitals=None), 403), ("another Origin", dict(Origin="https://evil.example.com"), 403),
+                             ("device not on the list", dict(device="100.64.0.99"), 403)]:
+        dev = over.pop("device", DEV_A)
+        st, _ = post("vitals-e2e-refused.txt", b"no", dev, **over)
+        check("file refused: %s -> %d" % (name, want), st == want, str(st))
+    check("nothing saved by the refused ones", not os.path.exists(os.path.join(dl, "vitals-e2e-refused.txt")))
+
+    data = ("hello from the page %s ✓\n" % tag).encode()
+    name = "vitals-e2e-%s.txt" % tag
+    real_names.append(name)
+    st, body = post(name, data)
+    path = os.path.join(dl, name)
+    check("file -> 200 {name, bytes}, saved in Downloads byte for byte", st == 200 and body == {"name": name, "bytes": str(len(data))}
+          and os.path.exists(path) and open(path, "rb").read() == data, "%s %s" % (st, body))
+    q = subprocess.run(["xattr", "-p", "com.apple.quarantine", path], capture_output=True, text=True).stdout.strip()
+    check("marked as downloaded (com.apple.quarantine, from Vitals)", ";Vitals;" in q, q)
+    st, body = post(name, b"second")
+    want = "vitals-e2e-%s (1).txt" % tag
+    check("same name again -> saved beside it, not over it", st == 200 and body.get("name") == want and open(path, "rb").read() == data
+          and open(os.path.join(dl, want), "rb").read() == b"second", str(body))
+    real_names.append(want)
+
+    cases = [("../../vitals-e2e-%s-up.sh" % tag, "vitals-e2e-%s-up.sh" % tag),
+             ("/etc/vitals-e2e-%s-abs" % tag, "vitals-e2e-%s-abs" % tag),
+             ("..\\..\\vitals-e2e-%s-win.txt" % tag, "vitals-e2e-%s-win.txt" % tag),
+             (".vitals-e2e-%s-hidden" % tag, "vitals-e2e-%s-hidden" % tag),
+             ("vitals-e2e-%s-‮gpj.app" % tag, "vitals-e2e-%s-gpj.app" % tag),
+             ("vitals-e2e-%s-ctl\x01\x7f.txt" % tag, "vitals-e2e-%s-ctl.txt" % tag),
+             ("vitals-e2e-%s-meeting 10:30.txt" % tag, "vitals-e2e-%s-meeting 10-30.txt" % tag),
+             ("C:\\Users\\me\\vitals-e2e-%s-pc.txt" % tag, "vitals-e2e-%s-pc.txt" % tag),
+             ("", "file"), ("...", "file"),
+             ("vitals-e2e-%s-" % tag + "é" * 150 + ".pdf", None)]
+    for raw, want in cases:
+        st, body = post(raw, b"payload")
+        got = body.get("name") if isinstance(body, dict) else None
+        if want is None:            # long: at most 200 bytes, the extension kept
+            ok = st == 200 and got and len(got.encode()) <= 200 and got.endswith(".pdf") and got.startswith("vitals-e2e-")
+        else:
+            ok = st == 200 and got in (want, want.replace(".", " (1).", 1) if "." in want else want + " (1)")
+        on_disk = bool(got) and os.path.exists(os.path.join(dl, got))
+        check("name %r -> %r, inside Downloads" % (raw[:40], got and got[:40]), ok and on_disk and "/" not in got, "%s %s" % (st, body))
+        if got:
+            real_names.append(got)
+    check("nothing written outside Downloads", not any(os.path.exists(os.path.join(args.home, n)) for n in ("vitals-e2e-%s-up.sh" % tag, "vitals-e2e-%s-win.txt" % tag))
+          and not os.path.exists("/etc/vitals-e2e-%s-abs" % tag))
+
+    # A link already in Downloads with that name: not followed, the file goes beside it.
+    target = os.path.join(args.home, "target-%s.txt" % tag)
+    open(target, "wb").write(b"untouched")
+    os.symlink(target, os.path.join(dl, "vitals-e2e-%s-link.txt" % tag))
+    st, body = post("vitals-e2e-%s-link.txt" % tag, b"overwrite?")
+    check("a symlink in the way is not followed", st == 200 and body.get("name") == "vitals-e2e-%s-link (1).txt" % tag and open(target, "rb").read() == b"untouched", str(body))
+
+    st, body = post("vitals-e2e-empty.txt", b"")
+    check("empty file -> 400", st == 400, "%s %s" % (st, body))
+
+    big = os.urandom(1 << 20) * 100                   # exactly 100 MB
+    t = time.monotonic()
+    st, body = post("vitals-e2e-%s-100mb.bin" % tag, big, timeout=120)
+    took = time.monotonic() - t
+    p = os.path.join(dl, "vitals-e2e-%s-100mb.bin" % tag)
+    ok = st == 200 and os.path.exists(p) and os.path.getsize(p) == len(big)
+    if ok:
+        with open(p, "rb") as f:
+            ok = hashlib.sha256(f.read()).digest() == hashlib.sha256(big).digest()
+    check("100 MB file -> saved whole", ok, "%s %s in %.1f s" % (st, str(body)[:60], took))
+    note("100 MB through the agent on loopback", "%.1f s (%.0f MB/s)" % (took, 100 / took if took else 0))
+    st, body = post("vitals-e2e-%s-over.bin" % tag, big + b"x", timeout=120)
+    check("100 MB + 1 byte -> 413 (or dropped once it says its size), not saved", st in (413, None) and not os.path.exists(os.path.join(dl, "vitals-e2e-%s-over.bin" % tag)), "%s %s" % (st, body))
+    st, body = post("vitals-e2e-%s-way-over.bin" % tag, big + os.urandom(1 << 20), timeout=120)
+    check("100 MB + 1 MB -> connection dropped, not saved", st in (None, 413) and not os.path.exists(os.path.join(dl, "vitals-e2e-%s-way-over.bin" % tag)), "status %s" % st)
+    del big
+    check("agent still running after the big files", args.agent_proc.poll() is None)
+
+    # A big body from a device that may not send one is refused when its headers arrive, not held.
+    def early(device, length, **over):
+        s = socket.create_connection(("127.0.0.1", agent.port), timeout=10)
+        hdr = agent.headers(device, "POST", **over)
+        req = agent.raw_request("POST", "/screen/file?name=vitals-e2e-early.bin", b"", hdr).replace(b"Content-Length: 0", b"Content-Length: %d" % length)
+        t = time.monotonic()
+        data = bytearray()
+        try:
+            s.sendall(req + b"z" * (1 << 20))
+            s.settimeout(5)
+            while True:
+                c = s.recv(65536)
+                if not c:
+                    break
+                data += c
+        except OSError:
+            pass
+        finally:
+            s.close()
+        return parse_response(bytes(data))[0], time.monotonic() - t
+    for who, dev, over in [("a device not on the list", "100.64.0.99", {}), ("no X-Vitals", DEV_A, dict(X_Vitals=None)),
+                           ("another Origin", DEV_A, dict(Origin="https://evil.example.com"))]:
+        st, took = early(dev, 50 << 20, **over)
+        check("50 MB upload, %s: refused after 1 MB, not held for the rest" % who, st in (403, None) and took < 3, "status %s after %.1f s" % (st, took))
+    st, took = early(DEV_A, (100 << 20) + 1)
+    check("an upload that says it is over 100 MB: refused at once", st in (413, None) and took < 3, "status %s after %.1f s" % (st, took))
+    check("none of them saved", not os.path.exists(os.path.join(dl, "vitals-e2e-early.bin")))
+
+    # A file arriving slowly (a phone on a poor link) is kept; a request that stops sending is dropped.
+    def trickle(n, gap):
+        s = socket.create_connection(("127.0.0.1", agent.port), timeout=40)
+        hdr = agent.headers(DEV_A, "POST")
+        hdr["Content-Type"] = "application/octet-stream"
+        req = agent.raw_request("POST", "/screen/file?name=vitals-e2e-%s-slow.txt" % tag, b"s" * n, hdr)
+        head = req[:len(req) - n]
+        s.sendall(head)
+        try:
+            for _ in range(n):
+                time.sleep(gap)
+                s.sendall(b"s")
+            return parse_response(s.recv(65536))[0]
+        except OSError:
+            return None
+        finally:
+            s.close()
+    res = {}
+    th = threading.Thread(target=lambda: res.setdefault("slow", trickle(7, 2.0)))
+    th2 = threading.Thread(target=lambda: res.setdefault("stalled", trickle(1, 16.0)))
+    th.start(); th2.start()
+    th.join(40); th2.join(40)
+    check("a file still arriving after 14 s is kept (a byte every 2 s)", res.get("slow") == 200, str(res.get("slow")))
+    real_names.append("vitals-e2e-%s-slow.txt" % tag)
+    check("a request that sends nothing for 16 s is dropped", res.get("stalled") is None, str(res.get("stalled")))
+
+    log = read_agent_log(args.home)
+    check("activity log: one line per saved file, with its name and the device",
+          any("Received %s (" % name in l and "from iPhone, saved to Downloads" in l for l in log), str([l for l in log if "Received" in l][:1]))
+    real_names.extend([n for n in os.listdir(dl) if n.startswith("vitals-e2e-")])
+
+
 def test_slow_reader(agent, fake):
     """A page that stops reading a 1 MB clipboard reply. Replies are written on the main queue, so this
     runs last, on its own session: a stall there can also hold up every other page."""
     section("A page that stops reading a big reply")
     if agent.json("POST", "/screen/clipboard/read")[0] == 404:
         return skip("slow reader", "no clipboard endpoints")
-    before = pbpaste()
+    before = save_clipboard("slow")
     ws, r = open_session(agent, fake, DEV_B)
     try:
         big = "abcdefghijklmnop" * 65536
@@ -1068,6 +1448,16 @@ def main():
     os.write(fd, json.dumps(cfg).encode())
     os.close(fd)
     print("throwaway home: %s" % home)
+    global PBX
+    if not args.no_clipboard:
+        pb = PB(home)
+        PBX, PBX_WHY[0] = (pb if pb.ok else None), pb.why
+    # How Tailscale reaches each fake device, as `tailscale status --json` would say (GET /screen/link).
+    args.home, args.ts_status = home, os.path.join(home, "tailscale-status.json")
+    json.dump(tailscale_fixture({DEV_A: ("192.168.1.20:41641", "fra", ""), DEV_B: ("", "fra", ""), DEV_C: ("", "fra", "100.64.0.50:7000")}),
+              open(args.ts_status, "w"))
+    real_dl = os.path.expanduser("~/Downloads")
+    real_names = []
 
     fake_proc = agent_proc = None
     t_start = time.monotonic()
@@ -1081,7 +1471,7 @@ def main():
         env = dict(os.environ, CFFIXED_USER_HOME=home, HOME=home)
         agent_log = open(os.path.join(home, "agent.out"), "w")
         agent_proc = subprocess.Popen([agent_bin, "serve", "--port", str(args.port), "--screen-port", str(args.vnc_port),
-                                       "--screen-idle", str(args.idle)], env=env, stdout=agent_log, stderr=subprocess.STDOUT)
+                                       "--screen-idle", str(args.idle), "--tailscale-status", args.ts_status], env=env, stdout=agent_log, stderr=subprocess.STDOUT)
         args.agent_proc = agent_proc
         print("fake_vnc pid %d on %d (control %d); agent pid %d on %d" % (fake_proc.pid, args.vnc_port, args.control_port, agent_proc.pid, args.port))
         if not wait_port(args.port, agent_proc):
@@ -1110,6 +1500,8 @@ def main():
         idle_thread, idle = test_idle(agent, fake, args.idle)
         t_idle = time.monotonic()
         test_performance(agent, fake, ws, r, args)
+        test_link(agent, args)
+        test_upload(agent, args, real_names)
         if args.no_clipboard:
             skip("clipboard", "--no-clipboard")
         else:
@@ -1158,6 +1550,9 @@ def main():
                     p.kill(); p.wait(5)
         real_after = real_state()
         check("installed agent's real control.json/control.log untouched", real_before == real_after, "%s -> %s" % (real_before, real_after))
+        if real_names:
+            landed = [n for n in set(real_names) if os.path.exists(os.path.join(real_dl, n))]
+            check("nothing landed in the real ~/Downloads", not landed, str(landed[:3]))
         if args.keep:
             print("kept %s" % home)
         else:

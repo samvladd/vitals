@@ -372,8 +372,9 @@ On a phone:
 
 The keyboard button opens the phone's keyboard with a row for esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows (the
 modifiers stay down for the next key: ⌘ then C copies). The menu has Spotlight, app switching and
-Mission Control, and **Copy to this phone** / **Paste from this phone**, which move text between the
-phone's clipboard and the Mac's (see Copy and paste, below). Turn the phone sideways for
+Mission Control, **Copy to this phone** / **Paste from this phone**, which move text and pictures
+between the phone's clipboard and the Mac's (see Copy and paste, below), and **Send a file to the
+Mac…**, which puts a file from the phone in the Mac's Downloads. Turn the phone sideways for
 the full picture with the controls in a rail beside it. Lock the phone or switch apps and come back:
 it reconnects by itself.
 
@@ -388,19 +389,32 @@ From another Mac:
 - The mouse and keyboard just work, with your own pointer always visible. Pinch the trackpad to zoom
   in, push against an edge to move around, and **⌃⌘F** for full screen. ⌘C and ⌘V copy and paste
   between the two Macs' clipboards.
+- **Drop a file on the screen** and it lands in the other Mac's Downloads.
 - The browser keeps a few shortcuts for itself (⌘Q, ⌘W, ⌘Tab, ⌘Space); the menu has Spotlight,
   app switching and Quit for the Mac.
 
 **Copy and paste.** Vitals carries the clipboard itself rather than leaving it to Screen Sharing,
 which passes it to a browser unreliably, if at all:
 
-- **Paste** (⌘V on a computer, the menu on a phone): this device's text goes onto the Mac's
-  clipboard, then Vitals presses ⌘V on the Mac. Keys you type straight after wait for it, so ⌘V then
-  Return runs what you pasted. If the browser won't hand over its clipboard, a box opens to paste into.
+- **Paste** (⌘V on a computer, the menu on a phone): this device's clipboard goes onto the Mac's,
+  then Vitals presses ⌘V on the Mac. Keys you type straight after wait for it, so ⌘V then Return runs
+  what you pasted. If the browser won't hand over its clipboard, a box opens to paste text into.
 - **Copy** (⌘C or ⌘X, or the menu): Vitals presses it on the Mac and puts what lands on the Mac's
   clipboard onto this device's.
 - **Copied on the Mac some other way** (a menu, a right click): the page offers it, one tap to copy.
-- Plain text, up to 1 MB. Only while that device's screen is open, and once a session in the log.
+- Text, rich text (formatting comes across as HTML, from a browser, TextEdit, Notes or Pages) and
+  pictures (a screenshot, an image copied from a page or Preview), both ways. Text and HTML up to
+  1 MB each, a picture up to 8 MB. A file copied in Finder comes across as its name, not its icon.
+- A copied picture on a phone takes one more tap: the browser lets the page fill the clipboard
+  without a tap only with what it knew to expect in the key press, and that is text.
+- Only while that device's screen is open, and once a session in the log.
+
+**Files.** Drop a file onto the screen (or **Send a file to the Mac…** in the menu, on a phone) and it
+is saved in **Downloads** on the Mac, up to 100 MB each, several at a time, with progress as it goes.
+It keeps its name, made safe (no folders, no hidden names, nothing that renders backwards), never
+replaces a file already there ("report (1).pdf" beside "report.pdf"), and is marked as downloaded,
+so macOS checks it before it opens, as it does for a browser's downloads. Folders aren't sent: zip
+them first. Only while that device's screen is open, and each file is a line in the activity log.
 
 **Faster by default.** A Retina screen is four pixels for each point. While you are connected, the
 Mac switches to the matching non-Retina mode (same size, windows stay put), so Screen Sharing sends
@@ -431,11 +445,18 @@ about 1 MB while a session is open; a minute after you leave, nothing is running
 | Vitals' server memory during a 4K session | — | 3.3 MB |
 | Relay CPU at 126 MB/s (far beyond real use) | — | 4% of one core |
 
+**Show speed** in the menu (off by default) puts a small box in the corner: the data coming from
+the Mac, frames per second, the round trip to the Mac and back, the picture's size, and how Tailscale
+carries the session: **Direct, same network**, **Direct** (over the internet), **Peer relay**, or
+**Via DERP** with the relay's region, in amber, which is slower. The Mac reads that from
+`tailscale status` for the device's own address, every few seconds while the box is open.
+
 **Make it fast: wire the Mac.** The relay adds well under a millisecond; the Mac's own network is
 what you feel. A Mac mini on 2.4 GHz Wi-Fi measured 46–305 ms from a laptop in the same house, where a
-cable gives about 1 ms. Plug it into the router (or at least use 5 GHz), and check the path with
-`tailscale ping <mac>`: "via" a LAN or public address is a direct connection, "via DERP" is relayed
-and slower.
+cable gives about 1 ms. Plug it into the router (or at least use 5 GHz). If the speed box says
+**Via DERP**, the two devices couldn't reach each other directly (often a strict firewall or a
+phone network) and every frame goes through a relay server: expect it to be slower. `tailscale ping
+<mac>` says the same from a terminal.
 
 _The desktop in these screenshots is a sample picture served by the test server, not a real Mac._
 
