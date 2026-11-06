@@ -64,7 +64,7 @@ body.kbup.keys #view { bottom: calc(var(--kbview, 0px) + 52px); }
 #keys button { flex: none; min-width: 42px; height: 36px; padding: 0 10px; border-radius: 9px; background: var(--raised); font-size: 15px; font-weight: 500; }
 #keys button.on { background: var(--text); color: var(--ground); }
 #keys .sep { flex: none; width: 1px; background: var(--line); margin: 4px 2px; }
-#kbd { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; resize: none; z-index: -1; }
+#kbd, #clip { position: fixed; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; font-size: 16px; resize: none; z-index: -1; }
 
 /* Sheets: sign-in, menu, messages */
 .panel { position: fixed; z-index: 20; left: 50%; top: calc(var(--vvtop, 0px) + var(--vvh, 100%) / 2); transform: translate(-50%, -50%);
@@ -75,7 +75,9 @@ body.kbup.keys #view { bottom: calc(var(--kbview, 0px) + 52px); }
 .panel label { display: block; font-size: 13px; color: var(--faint); margin: 14px 0 6px; }
 .panel input { width: 100%; height: 44px; border: 0; border-radius: 11px; background: var(--raised); color: var(--text); font: inherit; font-size: 16px; padding: 0 12px;
   -webkit-user-select: text; user-select: text; }
-.panel input:focus { outline: 2px solid var(--chart3); }
+.panel textarea { width: 100%; min-height: 96px; max-height: 40vh; border: 0; border-radius: 11px; background: var(--raised); color: var(--text); font: inherit;
+  font-size: 16px; padding: 10px 12px; resize: vertical; -webkit-user-select: text; user-select: text; }
+.panel input:focus, .panel textarea:focus { outline: 2px solid var(--chart3); }
 .panel .err { color: var(--negative); font-size: 14px; margin-top: 10px; }
 .panel .err:empty { display: none; }
 .actions { display: flex; gap: 10px; margin-top: 18px; }
@@ -161,6 +163,7 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   <button data-k="BackSpace" aria-label="Delete">⌫</button><button data-k="Return" aria-label="Return">⏎</button>
 </nav>
 <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Type on the Mac"></textarea>
+<textarea id="clip" tabindex="-1" aria-hidden="true"></textarea>
 
 <div id="scrim" hidden></div>
 <form class="panel" id="signin" hidden autocomplete="on">
@@ -189,21 +192,21 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   <button data-a="spotlight" role="menuitem">Spotlight <span>⌘ Space</span></button>
   <button data-a="switcher" role="menuitem">Switch app <span>⌘ Tab</span></button>
   <button data-a="mission" role="menuitem">Mission Control <span>⌃ ↑</span></button>
-  <button data-a="copy" role="menuitem">Copy <span>⌘ C</span></button>
-  <button data-a="paste" role="menuitem">Paste <span>⌘ V</span></button>
+  <button data-a="copy" role="menuitem" id="copyItem">Copy to this phone <span>⌘ C</span></button>
+  <button data-a="paste" role="menuitem" id="pasteItem">Paste from this phone <span>⌘ V</span></button>
   <button data-a="quit" role="menuitem">Quit app <span>⌘ Q</span></button>
   <hr>
   <button data-a="full" role="menuitem" id="fullItem">Full screen <span>⌃⌘F</span></button>
-  <button data-a="type" role="menuitem" id="typeItem">Type text from this phone…</button>
+  <button data-a="type" role="menuitem" id="typeItem">Type or paste text…</button>
   <button data-a="stats" role="menuitem">Show speed <span id="statsNote">off</span></button>
   <button data-a="disconnect" class="danger" role="menuitem">Disconnect</button>
 </div>
 
 <form class="panel" id="typer" hidden>
-  <h2>Type on the Mac</h2>
-  <p>Paste or write text here; it is typed on the Mac, at the cursor, key by key.</p>
-  <label for="typeText">Text</label><input id="typeText" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-  <div class="actions"><button type="button" class="btn" id="typeCancel">Cancel</button><button class="btn primary">Type it</button></div>
+  <h2>Paste on the Mac</h2>
+  <p>Paste or write text here. It goes onto the Mac’s clipboard and is pasted at the cursor.</p>
+  <label for="typeText">Text</label><textarea id="typeText" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+  <div class="actions"><button type="button" class="btn" id="typeCancel">Cancel</button><button class="btn primary">Paste it</button></div>
 </form>
 
 <div id="toast" hidden role="status"></div>
@@ -216,6 +219,7 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch {
                 set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
 const touchDevice = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
 const IDLE = 600, WARN = 540;                 // seconds; the Mac ends the session at IDLE as well
+const MAC_MODS = { MetaLeft: KeyTable.XK_Super_L, MetaRight: KeyTable.XK_Super_L, AltLeft: KeyTable.XK_Alt_L, AltRight: KeyTable.XK_Alt_R };
 
 // ---------- state ----------
 const S = {
@@ -262,27 +266,27 @@ setInterval(() => {
 }, 1000);
 
 // ---------- connection ----------
-async function start() {
-  try {
-    const r = await fetch('info', { cache: 'no-store' });
-    if (r.ok) { const j = await r.json(); S.user = j.user || ''; S.mac = j.mac || 'Mac'; }
-  } catch {}
-  $('name').textContent = S.mac;
-  document.title = `${S.mac} · Screen`;
-  $('user').value = S.user;
-  connect();
+function start() {
+  // Asked for alongside the picture mode, not before it: one round trip less before the screen shows.
+  const info = fetch('info', { cache: 'no-store' }).then(r => r.ok ? r.json() : {}).then(j => {
+    S.user = j.user || ''; S.mac = j.mac || 'Mac';
+    $('name').textContent = S.mac;
+    document.title = `${S.mac} · Screen`;
+    $('user').value = S.user;
+    if (!S.connected) $('waitText').textContent = `Connecting to ${S.mac}…`;
+  }).catch(() => {});
+  connect(info);
 }
 
-async function connect() {
+async function connect(alongside) {
   if (S.connecting) return;
   S.connecting = true;
   hide('ended'); setStatus('wait', 'Connecting…'); $('waitText').textContent = `Connecting to ${S.mac}…`; show('wait');
   S.wanted = true;
   // Before the picture starts: the Mac switches to (or back from) its lighter 1x mode, same layout.
-  try {
-    const r = await fetch('resolution', { method: 'POST', headers: { 'X-Vitals': '1' }, body: S.sharp ? 'full' : 'fast' });
-    S.fastMode = r.ok ? (await r.json()).fast : null;
-  } catch {}
+  const mode = fetch('resolution', { method: 'POST', headers: { 'X-Vitals': '1' }, body: S.sharp ? 'full' : 'fast' })
+    .then(async r => { S.fastMode = r.ok ? (await r.json()).fast : null; }).catch(() => {});
+  await Promise.all([mode, alongside]);
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + location.pathname.replace(/\/?$/, '/') + 'ws';
   const rfb = S.rfb = new RFB($('stage'), url, { wsProtocols: ['binary'], shared: true, credentials: S.creds || undefined });
   S.connecting = false;
@@ -292,11 +296,14 @@ async function connect() {
   rfb.background = '#000';
   rfb.focusOnClick = !touchDevice;
   rfb.showDotCursor = !touchDevice;           // the arrow above; on a phone the trackpad draws its own
-  // On a Mac keyboard noVNC sends Option as Mode_switch (the convention for Linux desktops). A Mac on the
-  // other end expects Alt for Option, which is also what the phone's ⌥ key sends: map it back.
+  // On a Mac keyboard noVNC sends ⌘ as Alt and Option as Mode_switch (the convention for Linux desktops),
+  // so ⌘C reached the Mac as ⌥C. A Mac on the other end expects Super for ⌘ and Alt for Option, which is
+  // also what the phone's ⌘ and ⌥ keys send: map the modifiers by the physical key.
   const sendKey = rfb.sendKey.bind(rfb);
-  rfb.sendKey = (keysym, code, down) => sendKey(
-    keysym === KeyTable.XK_Mode_switch ? KeyTable.XK_Alt_L : keysym === KeyTable.XK_ISO_Level3_Shift ? KeyTable.XK_Alt_R : keysym, code, down);
+  S.rawKey = (keysym, code, down) => sendKey(MAC_MODS[code] ??
+    (keysym === KeyTable.XK_Mode_switch ? KeyTable.XK_Alt_L : keysym === KeyTable.XK_ISO_Level3_Shift ? KeyTable.XK_Alt_R : keysym), code, down);
+  // While a paste is on its way to the Mac's clipboard, keys wait, so ⌘V then Return pastes, then returns.
+  rfb.sendKey = (keysym, code, down) => S.held ? S.held.push([keysym, code, down]) : S.rawKey(keysym, code, down);
   rfb.viewOnly = false;
   rfb.addEventListener('connect', onConnect);
   rfb.addEventListener('disconnect', onDisconnect);
@@ -320,6 +327,7 @@ function onConnect() {
   if (c) S.fbW = c.width;
   applyMode(); applyZoom(S.zoom, null);
   S.lastInput = Date.now(); alive(true);
+  watchClipboard();
   if (!touchDevice) S.rfb.focus();
   // Upright on a phone, a 16:9 screen is small: say once that sideways is better.
   else if (innerHeight > innerWidth && store.get('screenTipSideways', '') !== '1') {
@@ -544,7 +552,9 @@ el.addEventListener('pointermove', e => {
     const v = Math.hypot(dx, dy) * 16.7 / dt, gain = (c.width / $('view').clientWidth / S.zoom) * (0.55 + Math.min(1.6, v / 14));
     S.cx = Math.min(c.width - 1, Math.max(0, S.cx + dx * gain));
     S.cy = Math.min(c.height - 1, Math.max(0, S.cy + dy * gain));
-    if (!T.raf) T.raf = requestAnimationFrame(() => { T.raf = 0; mouse('mousemove', 0, T.dragging ? 1 : 0); follow(); drawCursor(); loupe(true); });
+    // The move goes to the Mac at once (noVNC paces them); only the drawing here waits for the next frame.
+    mouse('mousemove', 0, T.dragging ? 1 : 0);
+    if (!T.raf) T.raf = requestAnimationFrame(() => { T.raf = 0; follow(); drawCursor(); loupe(true); });
   } else if (T.mode === 'two' && T.pts.size === 2) {
     const [a, b] = [...T.pts.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -691,7 +701,8 @@ $('kbd').addEventListener('beforeinput', e => {
   pendingKey = null;                          // the keyboard reported it here: the keydown needn't
   const t = e.inputType;
   if (t === 'insertText' || t === 'insertReplacementText' || t === 'insertFromPaste') {
-    typeText(e.data ?? e.dataTransfer?.getData('text/plain') ?? '');
+    const text = e.data ?? e.dataTransfer?.getData('text/plain') ?? '';
+    if (t === 'insertFromPaste') pasteToMac(text); else typeText(text);
   } else if (t === 'deleteContentBackward' || t === 'deleteWordBackward') press(KeyTable.XK_BackSpace, t === 'deleteWordBackward' ? [KeyTable.XK_Alt_L] : []);
   else if (t === 'deleteContentForward') press(KeyTable.XK_Delete);
   else if (t === 'insertLineBreak' || t === 'insertParagraph') press(KeyTable.XK_Return);
@@ -750,24 +761,26 @@ $('menu').addEventListener('click', e => {
     case 'spotlight': cmd(K.XK_space); break;
     case 'switcher': cmd(K.XK_Tab); break;
     case 'mission': press(K.XK_Up, [K.XK_Control_L]); break;
-    case 'copy': cmd(keysyms.lookup(99)); break;
-    case 'paste': cmd(keysyms.lookup(118)); break;
+    case 'copy': copyFromMac(() => cmdKey(keysyms.lookup(99))); break;
+    case 'paste': pasteFromHere(); break;
     case 'quit': cmd(keysyms.lookup(113)); break;
     case 'stats': S.stats = !S.stats; store.set('screenStats', S.stats ? '1' : '0'); $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off'; break;
     case 'full':
       if (document.fullscreenElement) document.exitFullscreen?.();
       else document.documentElement.requestFullscreen?.().catch(() => toast('This browser can’t go full screen here'));
       break;
-    case 'type': show('scrim'); show('typer'); $('typeText').focus(); break;
+    case 'type': openTyper(); break;
     case 'disconnect': disconnect(); break;
   }
 });
-$('typer').addEventListener('submit', e => { e.preventDefault(); typeText($('typeText').value); $('typeText').value = ''; hide('typer'); hide('scrim'); });
+function openTyper() { show('scrim'); show('typer'); $('typeText').focus(); }
+$('typer').addEventListener('submit', e => { e.preventDefault(); pasteToMac($('typeText').value); $('typeText').value = ''; hide('typer'); hide('scrim'); });
 $('typeCancel').addEventListener('click', () => { hide('typer'); hide('scrim'); });
 
 // Full screen only where the browser offers it (not on iPhone, where the Home Screen app is already full).
 $('fullItem').hidden = !document.documentElement.requestFullscreen || touchDevice;
-if (!touchDevice) $('typeItem').firstChild.textContent = 'Type text from this computer…';
+if (!touchDevice) for (const [id, text] of [['copyItem', 'Copy to this computer'], ['pasteItem', 'Paste from this computer']])
+  $(id).firstChild.textContent = text;
 document.addEventListener('keydown', e => {          // ⌃⌘F, as in Mac apps; never sent on to the Mac
   if (e.ctrlKey && e.metaKey && e.code === 'KeyF') { e.preventDefault(); e.stopPropagation(); $('menu').querySelector('[data-a=full]').click(); }
 }, true);
@@ -783,6 +796,117 @@ function offerClipboard(text) {
   t.append(`Copied on ${S.mac}: “${text.length > 40 ? text.slice(0, 40) + '…' : text}”`, b);
   show('toast'); clearTimeout(toastTimer); toastTimer = setTimeout(() => hide('toast'), 8000);
 }
+
+// ---------- copy and paste, through the Mac's own clipboard ----------
+// Screen Sharing passes the clipboard to a browser unreliably, if at all, so Vitals does it: Paste puts
+// this device's text on the Mac's clipboard and presses ⌘V there; Copy presses ⌘C there and brings back
+// what landed on the Mac's clipboard. One read always waits on the Mac for the next change, so a Copy from
+// a menu on the Mac is offered here too.
+const clip = { ok: false, count: null, last: '', waiters: [], run: 0, pasting: 0 };
+const clipPost = (path, body) => fetch('clipboard/' + path, { method: 'POST', headers: { 'X-Vitals': '1' }, body })
+  .then(r => r.ok ? r.json() : Promise.reject(r.status));
+
+async function watchClipboard() {
+  const run = ++clip.run;
+  try { clip.count = (await clipPost('read', '')).count; clip.ok = true; } catch { clip.ok = false; return; }   // an older Vitals
+  while (S.connected && run === clip.run) {
+    let j;
+    try { j = await clipPost('read', String(clip.count)); } catch { await new Promise(r => setTimeout(r, 2000)); continue; }
+    if (run !== clip.run || j.count === clip.count) continue;
+    clip.count = j.count;
+    const waiting = clip.waiters.splice(0);
+    if (j.text == null) { for (const w of waiting) w.reject(new Error(j.skipped || 'not text')); continue; }
+    S.lastClip = j.text;                       // so Screen Sharing's own copy of it isn't offered again
+    if (waiting.length) for (const w of waiting) w.resolve(j.text);
+    else if (j.text !== clip.last) { S.lastClip = ''; offerClipboard(j.text); }
+  }
+}
+
+/** ⌘ and a key on the Mac. From a real keyboard (`fromKeys`), ⌘ still held here stays held there, so
+ *  ⌘V ⌘V or ⌘V ⌘Z work as they do locally. */
+function cmdKey(keysym, fromKeys = false) {
+  const key = S.rawKey; if (!key || !S.connected) return;
+  key(K.XK_Super_L, 'MetaLeft', true); key(keysym, null, true); key(keysym, null, false); key(K.XK_Super_L, 'MetaLeft', false);
+  if (fromKeys && S.metaHeld) { key(K.XK_Super_L, 'MetaLeft', true); S.metaOurs = true; }
+  touched();
+}
+function letGoOfCmd() { S.metaHeld = false; if (S.metaOurs) { S.metaOurs = false; S.rawKey?.(K.XK_Super_L, 'MetaLeft', false); } }
+/** The keys held back during a paste, sent now (after `first`, when given). */
+function releaseKeys(first) {
+  const q = S.held || []; S.held = null;
+  first?.();
+  for (const [k, c, d] of q) S.rawKey?.(k, c, d);
+}
+
+/** Copy on the Mac, then onto this device's clipboard. The write starts inside the tap or key press (as
+ *  browsers require) and is filled in once the Mac's clipboard changes. */
+function copyFromMac(press) {
+  if (!clip.ok) return press();                // an older Vitals: the Mac copies; Screen Sharing may offer it
+  const text = new Promise((resolve, reject) => {
+    const w = { resolve, reject }; clip.waiters.push(w);
+    setTimeout(() => { const i = clip.waiters.indexOf(w); if (i >= 0) { clip.waiters.splice(i, 1); reject(new Error('nothing copied')); } }, 2500);
+  });
+  press();
+  let settled = false;
+  const done = () => { settled = true; toast(`Copied from ${S.mac}`); };
+  // Not allowed here, or never answering: one tap to copy instead (offered even though it was seen).
+  const offer = () => { if (settled) return; settled = true; text.then(t => { S.lastClip = ''; offerClipboard(t); }, () => {}); };
+  let wrote;
+  try { wrote = navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) })]); }
+  catch { wrote = text.then(t => navigator.clipboard.writeText(t)); }
+  wrote.then(done, offer);
+  text.then(() => setTimeout(offer, 3000), () => {});
+}
+
+/** Text from this device, pasted on the Mac at its cursor. Empty: the Mac pastes its own clipboard. */
+async function pasteToMac(text, fromKeys = false) {
+  if (!S.connected) return;
+  const V = keysyms.lookup(118);
+  if (!text) return cmdKey(V, fromKeys);
+  if (clip.ok) {
+    clip.last = S.lastClip = text;             // set first: the change it causes is not offered back
+    S.held = S.held || [];
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
+    try {
+      const r = await fetch('clipboard/write', { method: 'POST', headers: { 'X-Vitals': '1' }, body: text, signal: stop.signal });
+      if (r.ok) return releaseKeys(() => cmdKey(V, fromKeys));
+    } catch {} finally { clearTimeout(timer); }
+  }
+  // No clipboard on the Mac's side: type it, key by key.
+  releaseKeys(() => text.length <= 5000 ? typeText(text) : toast('Couldn’t paste that on the Mac', true));
+}
+
+/** The menu's Paste: this device's clipboard, if the browser hands it over; otherwise a box to paste into. */
+function pasteFromHere() {
+  if (!navigator.clipboard?.readText) return openTyper();
+  navigator.clipboard.readText().then(pasteToMac, openTyper);
+}
+
+// ⌘C, ⌘X and ⌘V on a real keyboard. ⌘V: focus moves for an instant to a hidden box, so the browser pastes
+// this computer's clipboard into it (no permission prompt), and that text goes to the Mac.
+document.addEventListener('keydown', e => {
+  if (e.metaKey) S.metaHeld = true; else letGoOfCmd();
+  if (touchDevice || !S.connected || !e.metaKey || e.ctrlKey || e.altKey || e.repeat || !$('stage').contains(e.target)) return;
+  // The letter as the layout gives it, or for a non-Latin layout the key where it sits on a US keyboard.
+  const k = /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() : { KeyC: 'c', KeyX: 'x', KeyV: 'v' }[e.code];
+  if (k === 'c' || k === 'x') { e.preventDefault(); e.stopPropagation(); copyFromMac(() => cmdKey(keysyms.lookup(k.codePointAt(0)), true)); }
+  else if (k === 'v') {
+    e.stopPropagation();                      // not to noVNC, and no preventDefault: the paste must happen
+    const box = $('clip'); box.value = ''; box.focus({ preventScroll: true });
+    // Nothing pasted (an image, or a browser that pastes nowhere): the Mac pastes its own clipboard.
+    clip.pasting = setTimeout(() => { clip.pasting = 0; S.rfb?.focus(); cmdKey(keysyms.lookup(118), true); }, 300);
+  }
+}, true);
+document.addEventListener('paste', e => {
+  if (!clip.pasting) return;
+  e.preventDefault(); clearTimeout(clip.pasting); clip.pasting = 0;
+  S.rfb?.focus();
+  pasteToMac(e.clipboardData?.getData('text/plain') ?? '', true);
+}, true);
+document.addEventListener('keyup', e => { if (e.key === 'Meta') letGoOfCmd(); }, true);
+// A ⌘ let go of where this page didn't see it (another window, a system shortcut): the next move notices.
+for (const type of ['pointerdown', 'pointermove']) document.addEventListener(type, e => { if (S.metaHeld && !e.metaKey) letGoOfCmd(); }, { capture: true, passive: true });
+window.addEventListener('blur', letGoOfCmd);
 
 // Scrolling with a mouse or trackpad. noVNC sends at most one wheel step per event and drops the rest,
 // so a quick flick (a few large events) barely moved the Mac. Every real event becomes as many 50 px

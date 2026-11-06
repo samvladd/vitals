@@ -224,7 +224,8 @@ final class WebServer {
         if c.streaming { return }
         c.buf.append(d)
         if let r = Request(c.buf) { c.buf = Data(); c.parsed = true; route(r, c) }
-        else if c.buf.count > 65536 { drop(c) }
+        // Requests are small; a paste for the Mac's clipboard may be up to 1 MB.
+        else if c.buf.count > (c.buf.starts(with: Data("POST /screen/clipboard/write ".utf8)) ? Clipboard.maxBytes + 65536 : 65536) { drop(c) }
     }
 
     private func drop(_ c: Conn) {
@@ -245,7 +246,7 @@ final class WebServer {
     }
 
     private func send(_ c: Conn, _ status: Int, _ type: String, _ body: Data, cache: String = "no-store", extra: String = "") {
-        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict",
+        let reason = [200: "OK", 204: "No Content", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 413: "Content Too Large",
                       503: "Service Unavailable"][status] ?? ""
         let head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
             + "Cache-Control: \(cache)\r\n\(cors(c))\(extra)Connection: close\r\n\r\n"
@@ -304,7 +305,7 @@ final class WebServer {
             BatteryCare.handle(r) { [weak self] code, body in self?.send(c, code, json: body) }
         case ("GET", "/apps"), ("GET", "/apps/installed"), ("GET", "/apps/icon"), ("POST", "/apps/quit"), ("POST", "/apps/open"): apps(r, c)
         case ("GET", "/screen"), ("GET", "/screen/"), ("GET", "/screen/info"), ("GET", "/screen/manifest.webmanifest"), ("GET", "/screen/" + Self.novnc), ("GET", "/screen/ws"), ("POST", "/screen/alive"),
-             ("POST", "/screen/resolution"):
+             ("POST", "/screen/resolution"), ("POST", "/screen/clipboard/read"), ("POST", "/screen/clipboard/write"):
             screen(r, c)
         // Actions (Actions.swift): the count is all another Mac's page may read; the rest is gated there.
         case ("GET", "/actions/count"): send(c, 200, json: "{\"count\":\(Control.load() == nil ? 0 : Actions.load().count)}")
@@ -474,6 +475,20 @@ final class WebServer {
             let mode = fast ? Display.fast() : { Display.restore(); return nil }()
             send(c, 200, json: json(["fast": mode]))
         case "/screen/ws": upgrade(r, c, device: device)
+        case "/screen/clipboard/read", "/screen/clipboard/write":
+            // Only for a device whose screen is open: it is that session's copy and paste.
+            guard let session = Screen.session(of: device) else { return send(c, 409, json: #"{"error":"no screen session"}"#) }
+            if !session.sharedClipboard {
+                session.sharedClipboard = true
+                Control.record("Clipboard shared with \(device) for its screen session")
+            }
+            if r.path.hasSuffix("/write") {
+                guard r.body.utf8.count <= Clipboard.maxBytes else { return send(c, 413, json: #"{"error":"more than 1 MB"}"#) }
+                return send(c, 200, json: "{\"count\":\(Clipboard.set(r.body))}")
+            }
+            // Read: an empty body is "what is the count now"; a count waits until the clipboard is not that.
+            guard let after = Int(r.body.trimmingCharacters(in: .whitespacesAndNewlines)) else { return send(c, 200, json: Clipboard.reply(false)) }
+            clipboardWait(c, device: device, after: after, until: Date(timeIntervalSinceNow: 20))
         default:
             // Sent compressed when the browser takes it (all do): 57 KB rather than 189 KB on a phone.
             let gz = (r.headers["accept-encoding"] ?? "").contains("gzip")
@@ -482,6 +497,25 @@ final class WebServer {
             c.write(Data(head.utf8) + (gz ? WebAssets.novncGz : WebAssets.novnc))
             drop(c)
         }
+    }
+
+    /// Holds a read until the clipboard changes (checked every 50 ms) or 20 s pass, whichever is first,
+    /// and only while that device's screen stays open: a session that ended takes its pending read with it.
+    private func clipboardWait(_ c: Conn, device: String, after: Int, until: Date, settling: Bool = false) {
+        guard conns[ObjectIdentifier(c)] != nil else { return }     // the page went away meanwhile
+        guard Screen.session(of: device) != nil else { return send(c, 409, json: #"{"error":"no screen session"}"#) }
+        let next = { [weak self] (settle: Bool, delay: Double) in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.clipboardWait(c, device: device, after: after, until: until, settling: settle)
+            }
+        }
+        if Clipboard.count != after {
+            // An app copying empties the clipboard, then writes to it: caught in between, look once more.
+            if !settling, NSPasteboard.general.string(forType: .string) == nil { return next(true, 0.1) }
+            return send(c, 200, json: Clipboard.reply(true))
+        }
+        if Date() >= until { return send(c, 200, json: Clipboard.reply(false)) }
+        next(false, 0.05)
     }
 
     private func upgrade(_ r: Request, _ c: Conn, device: String) {

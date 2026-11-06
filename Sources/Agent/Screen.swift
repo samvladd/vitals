@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CryptoKit
 import Foundation
@@ -12,6 +13,9 @@ import Foundation
 // page stops answering (a ping every 25 s; silence for 75 s is a phone out of signal), or after ten
 // minutes without that device's page reporting a touch or a key (POST /screen/alive). At most three
 // sessions at a time.
+//
+// Copy and paste go through this Mac's own clipboard (Clipboard, below), read and set by this process
+// for the page: Screen Sharing passes it to a browser unreliably, if at all.
 
 enum Screen {
     static var idleLimit = 600.0               // --screen-idle, for tests
@@ -28,6 +32,9 @@ enum Screen {
 
     /// A touch or a key on one device's page keeps that device's sessions open (and no one else's).
     static func touched(by device: String) { for r in relays where r.device == device { r.lastInput = Date() } }
+
+    /// That device's open session, if it has one: the clipboard is only shared while its screen is open.
+    static func session(of device: String) -> ScreenRelay? { relays.first { $0.device == device } }
 
     /// Called every few seconds on the main queue.
     static func housekeeping() {
@@ -67,6 +74,7 @@ enum Screen {
 final class ScreenRelay {
     let client: Int32, vnc: Int32, device: String
     var lastInput = Date()                    // main queue only
+    var sharedClipboard = false               // main queue only: logged once a session
     private var lastPing = Date()             // main queue only
     private let started = Date()
     private let state = NSLock(), writing = NSLock()
@@ -215,8 +223,8 @@ final class ScreenRelay {
         else { head.append(127); head += (0..<8).reversed().map { UInt8((n >> ($0 * 8)) & 0xFF) } }
         writing.lock(); defer { writing.unlock() }
         if closed { return false }              // set only while `writing` is held, so safe to read here
-        func put(_ p: UnsafeRawBufferPointer) -> Bool {
-            var off = 0
+        func put(_ p: UnsafeRawBufferPointer, from: Int) -> Bool {
+            var off = from
             while off < p.count {
                 let w = write(client, p.baseAddress! + off, p.count - off)
                 if w <= 0 { return false }
@@ -224,7 +232,41 @@ final class ScreenRelay {
             }
             return true
         }
-        return head.withUnsafeBytes(put) && (n == 0 || payload.withUnsafeBytes(put))
+        // Header and payload in one call, so they leave as one packet rather than a tiny one and the rest.
+        return head.withUnsafeBytes { h in payload.withUnsafeBytes { p in
+            var iov = [iovec(iov_base: UnsafeMutableRawPointer(mutating: h.baseAddress), iov_len: h.count),
+                       iovec(iov_base: UnsafeMutableRawPointer(mutating: p.baseAddress), iov_len: p.count)]
+            let w = writev(client, &iov, n == 0 ? 1 : 2)
+            if w <= 0 { return false }
+            return w < h.count ? put(h, from: w) && put(p, from: 0) : put(p, from: w - h.count)
+        } }
+    }
+}
+
+// MARK: Copy and paste: this Mac's clipboard, for the page
+
+/// The page's Copy and Paste. Paste sets this Mac's clipboard to what the page sends and the page then
+/// presses ⌘V on the Mac; Copy waits for this Mac's clipboard to change (after the page's ⌘C, or a
+/// Copy from a menu on the Mac) and hands the text back. Plain text only, up to 1 MB.
+enum Clipboard {
+    static let maxBytes = 1 << 20
+    static var count: Int { NSPasteboard.general.changeCount }
+
+    /// {"count": N}, with the text when it is text and not too big.
+    static func reply(_ withText: Bool) -> String {
+        struct Reply: Encodable { var count: Int, text: String?, skipped: String? }
+        let pb = NSPasteboard.general, n = pb.changeCount
+        guard withText else { return json(Reply(count: n, text: nil, skipped: nil)) }
+        guard let s = pb.string(forType: .string) else { return json(Reply(count: n, text: nil, skipped: "not text")) }
+        guard s.utf8.count <= maxBytes else { return json(Reply(count: n, text: nil, skipped: "too big")) }
+        return json(Reply(count: n, text: s, skipped: nil))
+    }
+
+    static func set(_ text: String) -> Int {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        return pb.changeCount
     }
 }
 

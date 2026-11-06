@@ -371,8 +371,9 @@ On a phone:
 | Two fingers | Scroll, or pinch to zoom in on the picture |
 
 The keyboard button opens the phone's keyboard with a row for esc, tab, ⌘ ⌥ ⌃ ⇧ and the arrows (the
-modifiers stay down for the next key: ⌘ then C copies). The menu has Spotlight, app switching,
-Mission Control and a box to paste text that is then typed on the Mac. Turn the phone sideways for
+modifiers stay down for the next key: ⌘ then C copies). The menu has Spotlight, app switching and
+Mission Control, and **Copy to this phone** / **Paste from this phone**, which move text between the
+phone's clipboard and the Mac's (see Copy and paste, below). Turn the phone sideways for
 the full picture with the controls in a rail beside it. Lock the phone or switch apps and come back:
 it reconnects by itself.
 
@@ -385,15 +386,28 @@ From another Mac:
 - In Safari, **File › Add to Dock** makes it an app of its own: a "Mac mini" in the Dock that opens
   straight onto its screen, in its own window.
 - The mouse and keyboard just work, with your own pointer always visible. Pinch the trackpad to zoom
-  in, push against an edge to move around, and **⌃⌘F** for full screen. If the Mac shares what you
-  copy there, Vitals offers to copy it here too.
+  in, push against an edge to move around, and **⌃⌘F** for full screen. ⌘C and ⌘V copy and paste
+  between the two Macs' clipboards.
 - The browser keeps a few shortcuts for itself (⌘Q, ⌘W, ⌘Tab, ⌘Space); the menu has Spotlight,
   app switching and Quit for the Mac.
+
+**Copy and paste.** Vitals carries the clipboard itself rather than leaving it to Screen Sharing,
+which passes it to a browser unreliably, if at all:
+
+- **Paste** (⌘V on a computer, the menu on a phone): this device's text goes onto the Mac's
+  clipboard, then Vitals presses ⌘V on the Mac. Keys you type straight after wait for it, so ⌘V then
+  Return runs what you pasted. If the browser won't hand over its clipboard, a box opens to paste into.
+- **Copy** (⌘C or ⌘X, or the menu): Vitals presses it on the Mac and puts what lands on the Mac's
+  clipboard onto this device's.
+- **Copied on the Mac some other way** (a menu, a right click): the page offers it, one tap to copy.
+- Plain text, up to 1 MB. Only while that device's screen is open, and once a session in the log.
 
 **Faster by default.** A Retina screen is four pixels for each point. While you are connected, the
 Mac switches to the matching non-Retina mode (same size, windows stay put), so Screen Sharing sends
 a quarter of the data; macOS switches back by itself when the session ends. **Picture: sharper** in
-the menu keeps full Retina.
+the menu keeps full Retina. The page also sends each pointer move the moment the finger moves (not at
+the next screen refresh), asks for the picture mode and the Mac's name at the same time when
+connecting, and the relay sends each piece of the picture as one packet.
 
 **Same checks, plus macOS's.** Every request passes app control's checks (your Tailscale account, a
 named device, this Mac's address and its own page), and then macOS asks for the Mac's login. The relay
