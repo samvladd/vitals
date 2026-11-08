@@ -128,8 +128,13 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   border: 2px solid rgba(255,255,255,.85); box-shadow: 0 10px 30px rgba(0,0,0,.6); background: #000; opacity: 0; transition: opacity .12s; }
 #loupe.on { opacity: 1; }
 #loupe canvas { width: 100%; height: 100%; display: block; }
-#stats { position: absolute; z-index: 4; left: 8px; bottom: 8px; padding: 4px 8px; border-radius: 7px; background: rgba(0,0,0,.6);
-  color: var(--accent); font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+#stats { position: absolute; z-index: 4; left: 8px; top: 8px; padding: 4px 8px; border-radius: 7px; background: rgba(0,0,0,.6);
+  color: var(--accent); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; white-space: pre; }
+#stats .slow { color: var(--warning); }
+/* A file dragged over the screen: it goes to the Mac's Downloads. */
+#drop { position: absolute; z-index: 6; inset: 10px; border: 2px dashed var(--accent); border-radius: 16px; background: rgba(12, 13, 15, .72);
+  display: flex; align-items: center; justify-content: center; text-align: center; color: var(--text); font-size: 17px; font-weight: 600; pointer-events: none; }
+#drop span { display: block; color: var(--muted); font-size: 14px; font-weight: 400; margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
 </style>
 </head>
@@ -147,6 +152,7 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   <div id="touch" hidden></div>
   <div id="loupe"><canvas width="300" height="300"></canvas></div>
   <div id="stats" hidden></div>
+  <div id="drop" hidden><div>Drop to send to the Mac<span id="dropNote">It goes into Downloads</span></div></div>
   <div id="cursor" hidden><svg viewBox="0 0 22 22"><path d="M3 2l0 16 4.3-4.1 2.9 6.6 2.8-1.2-2.9-6.5 6-.1z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg></div>
 </main>
 <div id="wait"><div class="spinner"></div><span id="waitText">Connecting to the Mac…</span></div>
@@ -164,6 +170,7 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
 </nav>
 <textarea id="kbd" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Type on the Mac"></textarea>
 <textarea id="clip" tabindex="-1" aria-hidden="true"></textarea>
+<input type="file" id="filePick" multiple hidden>
 
 <div id="scrim" hidden></div>
 <form class="panel" id="signin" hidden autocomplete="on">
@@ -194,6 +201,7 @@ body.keys #toast { bottom: calc(66px + env(safe-area-inset-bottom)); }
   <button data-a="mission" role="menuitem">Mission Control <span>⌃ ↑</span></button>
   <button data-a="copy" role="menuitem" id="copyItem">Copy to this phone <span>⌘ C</span></button>
   <button data-a="paste" role="menuitem" id="pasteItem">Paste from this phone <span>⌘ V</span></button>
+  <button data-a="file" role="menuitem" id="fileItem">Send a file to the Mac…</button>
   <button data-a="quit" role="menuitem">Quit app <span>⌘ Q</span></button>
   <hr>
   <button data-a="full" role="menuitem" id="fullItem">Full screen <span>⌃⌘F</span></button>
@@ -245,8 +253,8 @@ RFB.cursors.dot = (() => {
   return { rgbaPixels: new Uint8Array(g.getImageData(0, 0, w, h).data.buffer), w, h, hotx: 1, hoty: 1 };
 })();
 
-// ---------- speed: count what arrives on the socket noVNC opens ----------
-const meter = { bytes: 0, msgs: 0 };
+// ---------- speed: count what arrives on the socket noVNC opens, and the frames it draws ----------
+const meter = { bytes: 0, msgs: 0, frames: 0 };
 // A genuine WebSocket, as noVNC checks for one, with a listener added.
 window.WebSocket = new Proxy(window.WebSocket, {
   construct(Native, args) {
@@ -255,15 +263,42 @@ window.WebSocket = new Proxy(window.WebSocket, {
     return ws;
   },
 });
-let lastMeter = { t: performance.now(), bytes: 0 };
+let lastMeter = { t: performance.now(), bytes: 0, frames: 0 };
 setInterval(() => {
-  const now = performance.now(), dt = (now - lastMeter.t) / 1000, rate = (meter.bytes - lastMeter.bytes) / dt;
-  lastMeter = { t: now, bytes: meter.bytes };
+  const now = performance.now(), dt = (now - lastMeter.t) / 1000;
+  const rate = (meter.bytes - lastMeter.bytes) / dt, fps = (meter.frames - lastMeter.frames) / dt;
+  lastMeter = { t: now, bytes: meter.bytes, frames: meter.frames };
   if (!S.stats || !S.connected) return;
-  const c = canvas();
-  $('stats').textContent = `${rate > 1e6 ? (rate / 1e6).toFixed(1) + ' MB/s' : Math.round(rate / 1e3) + ' KB/s'}`
-    + (S.rtt != null ? ` · ${S.rtt} ms` : '') + (c ? ` · ${c.width}×${c.height}` : '');
+  const c = canvas(), box = $('stats');
+  box.textContent = `${rate > 1e6 ? (rate / 1e6).toFixed(1) + ' MB/s' : Math.round(rate / 1e3) + ' KB/s'} · ${Math.round(fps)} fps`
+    + (S.rtt != null ? ` · ${S.rtt} ms` : '');
+  const path = S.link ? linkText(S.link) : '', slow = S.link?.via === 'DERP';
+  const line = document.createElement('span'); if (slow) line.className = 'slow';
+  line.textContent = [path, c ? `${c.width}×${c.height}` : ''].filter(Boolean).join(' · ');
+  if (line.textContent) box.append('\n', line);
 }, 1000);
+
+/** How Tailscale carries this session, in a few words. */
+function linkText(l) {
+  if (l.via === 'direct') return l.lan ? 'Direct, same network' : 'Direct';
+  if (l.via === 'peer relay') return 'Peer relay';
+  if (l.via === 'DERP') return `Via DERP${l.region ? ' (' + l.region + ')' : ''}: relayed, slower`;
+  return '';
+}
+// While the box is showing: every 3 s, ask the Mac how this device reaches it, and time the answer
+// (the round trip shown beside the speed). The Mac answers from what it knows, so it is quick.
+async function pollLink() {
+  if (!S.stats || !S.connected || document.hidden) return;
+  const t0 = performance.now();
+  try {
+    const r = await fetch('link', { cache: 'no-store' });
+    if (!r.ok) return;
+    S.link = await r.json();
+    if (S.linkTimed) S.rtt = Math.round(performance.now() - t0);
+    S.linkTimed = true;                        // the first may wait for Tailscale: not a round trip
+  } catch {}
+}
+setInterval(pollLink, 3000);
 
 // ---------- connection ----------
 function start() {
@@ -305,11 +340,14 @@ async function connect(alongside) {
   // While a paste is on its way to the Mac's clipboard, keys wait, so ⌘V then Return pastes, then returns.
   rfb.sendKey = (keysym, code, down) => S.held ? S.held.push([keysym, code, down]) : S.rawKey(keysym, code, down);
   rfb.viewOnly = false;
+  // Frames per second for the speed box: noVNC shows each complete update from the Mac with one flip.
+  const display = rfb._display, flip = display?.flip?.bind(display);
+  if (flip) display.flip = from => { meter.frames++; return flip(from); };
   rfb.addEventListener('connect', onConnect);
   rfb.addEventListener('disconnect', onDisconnect);
   rfb.addEventListener('credentialsrequired', e => askCredentials(e.detail.types));
   rfb.addEventListener('securityfailure', () => { S.creds = null; S.endedBy = 'signin'; S.signinError = 'That didn’t work. Check the password and try again.'; });
-  rfb.addEventListener('clipboard', e => offerClipboard(e.detail.text));
+  rfb.addEventListener('clipboard', e => offerClipboard({ text: e.detail.text }));
   rfb.addEventListener('desktopname', e => { if (e.detail.name) $('name').textContent = S.mac; });
 }
 
@@ -328,6 +366,7 @@ function onConnect() {
   applyMode(); applyZoom(S.zoom, null);
   S.lastInput = Date.now(); alive(true);
   watchClipboard();
+  pollLink();
   if (!touchDevice) S.rfb.focus();
   // Upright on a phone, a 16:9 screen is small: say once that sideways is better.
   else if (innerHeight > innerWidth && store.get('screenTipSideways', '') !== '1') {
@@ -764,7 +803,11 @@ $('menu').addEventListener('click', e => {
     case 'copy': copyFromMac(() => cmdKey(keysyms.lookup(99))); break;
     case 'paste': pasteFromHere(); break;
     case 'quit': cmd(keysyms.lookup(113)); break;
-    case 'stats': S.stats = !S.stats; store.set('screenStats', S.stats ? '1' : '0'); $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off'; break;
+    case 'stats':
+      S.stats = !S.stats; store.set('screenStats', S.stats ? '1' : '0'); $('stats').hidden = !S.stats; $('statsNote').textContent = S.stats ? 'on' : 'off';
+      pollLink();
+      break;
+    case 'file': $('filePick').click(); break;
     case 'full':
       if (document.fullscreenElement) document.exitFullscreen?.();
       else document.documentElement.requestFullscreen?.().catch(() => toast('This browser can’t go full screen here'));
@@ -779,31 +822,52 @@ $('typeCancel').addEventListener('click', () => { hide('typer'); hide('scrim'); 
 
 // Full screen only where the browser offers it (not on iPhone, where the Home Screen app is already full).
 $('fullItem').hidden = !document.documentElement.requestFullscreen || touchDevice;
-if (!touchDevice) for (const [id, text] of [['copyItem', 'Copy to this computer'], ['pasteItem', 'Paste from this computer']])
+if (!touchDevice) for (const [id, text] of [['copyItem', 'Copy to this computer'], ['pasteItem', 'Paste from this computer'], ['fileItem', 'Send a file to the Mac… (or drop it)']])
   $(id).firstChild.textContent = text;
 document.addEventListener('keydown', e => {          // ⌃⌘F, as in Mac apps; never sent on to the Mac
   if (e.ctrlKey && e.metaKey && e.code === 'KeyF') { e.preventDefault(); e.stopPropagation(); $('menu').querySelector('[data-a=full]').click(); }
 }, true);
 
-// The Mac's clipboard, if Screen Sharing shares it with this page: offer it here, one tap to copy.
-function offerClipboard(text) {
-  if (!text || text === S.lastClip) return;
-  S.lastClip = text;
+// What the Mac copied: {text, html, png (base64)}, any of them. Offered here with one tap to copy, when
+// it couldn't be put on this device's clipboard by itself.
+const clipKey = j => j.png ? `png:${j.png.length}:${j.png.slice(-48)}` : j.text || '';
+const clipText = j => j.png ? (j.text ? `a picture and “${short(j.text)}”` : 'a picture') : `“${short(j.text)}”`;
+const short = t => t.length > 40 ? t.slice(0, 40) + '…' : t;
+function offerClipboard(j) {
+  if (!j || (!j.text && !j.png) || clipKey(j) === S.lastClip) return;
+  S.lastClip = clipKey(j);
   const t = $('toast'); t.textContent = ''; t.classList.remove('warn');
   const b = document.createElement('button');
   b.textContent = 'Copy here'; b.style.cssText = 'margin-left:10px;color:var(--accent);font-weight:600';
-  b.onclick = () => navigator.clipboard?.writeText(text).then(() => toast('Copied to this device'), () => toast('Couldn’t copy'));
-  t.append(`Copied on ${S.mac}: “${text.length > 40 ? text.slice(0, 40) + '…' : text}”`, b);
+  b.onclick = () => writeHere(j).then(() => toast('Copied to this device'), () => toast('Couldn’t copy'));
+  t.append(`Copied on ${S.mac}: ${clipText(j)}`, b);
   show('toast'); clearTimeout(toastTimer); toastTimer = setTimeout(() => hide('toast'), 8000);
+}
+
+const b64ToBlob = (b64, type) => fetch(`data:${type};base64,${b64}`).then(r => r.blob());
+const blobToB64 = blob => new Promise((resolve, reject) => {
+  const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1] || ''); r.onerror = reject; r.readAsDataURL(blob);
+});
+const escapeHTML = t => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]).replace(/\r?\n/g, '<br>');
+
+/** All of it onto this device's clipboard, now: a picture, HTML and text, whichever the Mac had. */
+function writeHere(j) {
+  const item = {};
+  if (j.text != null) item['text/plain'] = new Blob([j.text], { type: 'text/plain' });
+  if (j.html != null) item['text/html'] = new Blob([j.html], { type: 'text/html' });
+  if (j.png) item['image/png'] = b64ToBlob(j.png, 'image/png');
+  try { return navigator.clipboard.write([new ClipboardItem(item)]); }
+  catch { return j.text != null ? navigator.clipboard.writeText(j.text) : Promise.reject(new Error('no ClipboardItem')); }
 }
 
 // ---------- copy and paste, through the Mac's own clipboard ----------
 // Screen Sharing passes the clipboard to a browser unreliably, if at all, so Vitals does it: Paste puts
-// this device's text on the Mac's clipboard and presses ⌘V there; Copy presses ⌘C there and brings back
-// what landed on the Mac's clipboard. One read always waits on the Mac for the next change, so a Copy from
-// a menu on the Mac is offered here too.
-const clip = { ok: false, count: null, last: '', waiters: [], run: 0, pasting: 0 };
-const clipPost = (path, body) => fetch('clipboard/' + path, { method: 'POST', headers: { 'X-Vitals': '1' }, body })
+// this device's clipboard (text, rich text, a picture) on the Mac's and presses ⌘V there; Copy presses ⌘C
+// there and brings back what landed on the Mac's clipboard. One read always waits on the Mac for the
+// next change, so a Copy from a menu on the Mac is offered here too.
+const clip = { ok: false, count: null, last: '', wrote: null, writing: 0, waiters: [], run: 0, pasting: 0 };
+const clipPost = (path, body, json) => fetch('clipboard/' + path, { method: 'POST', body,
+  headers: json ? { 'X-Vitals': '1', 'Content-Type': 'application/json' } : { 'X-Vitals': '1' } })
   .then(r => r.ok ? r.json() : Promise.reject(r.status));
 
 async function watchClipboard() {
@@ -815,10 +879,10 @@ async function watchClipboard() {
     if (run !== clip.run || j.count === clip.count) continue;
     clip.count = j.count;
     const waiting = clip.waiters.splice(0);
-    if (j.text == null) { for (const w of waiting) w.reject(new Error(j.skipped || 'not text')); continue; }
-    S.lastClip = j.text;                       // so Screen Sharing's own copy of it isn't offered again
-    if (waiting.length) for (const w of waiting) w.resolve(j.text);
-    else if (j.text !== clip.last) { S.lastClip = ''; offerClipboard(j.text); }
+    if (j.text == null && !j.png) { for (const w of waiting) w.reject(new Error(j.skipped || 'not text')); continue; }
+    S.lastClip = clipKey(j);                   // so Screen Sharing's own copy of it isn't offered again
+    if (waiting.length) for (const w of waiting) w.resolve(j);
+    else if (!clip.writing && j.count !== clip.wrote && (j.png || j.text !== clip.last)) { S.lastClip = ''; offerClipboard(j); }   // not our own paste
   }
 }
 
@@ -839,10 +903,12 @@ function releaseKeys(first) {
 }
 
 /** Copy on the Mac, then onto this device's clipboard. The write starts inside the tap or key press (as
- *  browsers require) and is filled in once the Mac's clipboard changes. */
+ *  browsers require) with text and HTML to come, filled in once the Mac's clipboard changes. A picture
+ *  can't be promised before it is known to be one: then that write gives way to one made when it
+ *  arrives, which a browser may allow (on a computer) or not (on a phone: one tap, on the offer). */
 function copyFromMac(press) {
   if (!clip.ok) return press();                // an older Vitals: the Mac copies; Screen Sharing may offer it
-  const text = new Promise((resolve, reject) => {
+  const got = new Promise((resolve, reject) => {
     const w = { resolve, reject }; clip.waiters.push(w);
     setTimeout(() => { const i = clip.waiters.indexOf(w); if (i >= 0) { clip.waiters.splice(i, 1); reject(new Error('nothing copied')); } }, 2500);
   });
@@ -850,34 +916,57 @@ function copyFromMac(press) {
   let settled = false;
   const done = () => { settled = true; toast(`Copied from ${S.mac}`); };
   // Not allowed here, or never answering: one tap to copy instead (offered even though it was seen).
-  const offer = () => { if (settled) return; settled = true; text.then(t => { S.lastClip = ''; offerClipboard(t); }, () => {}); };
+  const offer = () => { if (settled) return; settled = true; got.then(j => { S.lastClip = ''; offerClipboard(j); }, () => {}); };
+  const words = got.then(j => j.png || j.text == null ? Promise.reject(new Error('a picture')) : j);
   let wrote;
-  try { wrote = navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) })]); }
-  catch { wrote = text.then(t => navigator.clipboard.writeText(t)); }
-  wrote.then(done, offer);
-  text.then(() => setTimeout(offer, 3000), () => {});
+  try {
+    wrote = navigator.clipboard.write([new ClipboardItem({
+      'text/plain': words.then(j => new Blob([j.text], { type: 'text/plain' })),
+      'text/html': words.then(j => new Blob([j.html ?? escapeHTML(j.text)], { type: 'text/html' })),
+    })]);
+  } catch { wrote = words.then(j => navigator.clipboard.writeText(j.text)); }
+  wrote.then(done, () => got.then(j => j.png ? writeHere(j).then(done, offer) : offer(), () => {}));
+  got.then(() => setTimeout(offer, 3000), () => {});
 }
 
-/** Text from this device, pasted on the Mac at its cursor. Empty: the Mac pastes its own clipboard. */
-async function pasteToMac(text, fromKeys = false) {
+/** This device's clipboard, pasted on the Mac at its cursor: text, or {text, html, image (a Blob)}.
+ *  Empty: the Mac pastes its own clipboard. */
+async function pasteToMac(what, fromKeys = false) {
   if (!S.connected) return;
   const V = keysyms.lookup(118);
-  if (!text) return cmdKey(V, fromKeys);
+  const c = typeof what === 'string' ? { text: what } : what || {};
+  if (!c.text && !c.html && !c.image) return cmdKey(V, fromKeys);
+  if (c.image && c.image.size > 8 << 20) return toast('That picture is over 8 MB: too big to paste', true);
   if (clip.ok) {
-    clip.last = S.lastClip = text;             // set first: the change it causes is not offered back
+    clip.last = c.text ?? ''; S.lastClip = c.text ?? '';   // set first: the change it causes is not offered back
     S.held = S.held || [];
-    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 4000);
+    const stop = new AbortController(), timer = setTimeout(() => stop.abort(), c.image ? 20000 : 4000);
+    clip.writing++;
     try {
-      const r = await fetch('clipboard/write', { method: 'POST', headers: { 'X-Vitals': '1' }, body: text, signal: stop.signal });
-      if (r.ok) return releaseKeys(() => cmdKey(V, fromKeys));
-    } catch {} finally { clearTimeout(timer); }
+      const rich = !!(c.html || c.image);
+      const body = rich ? JSON.stringify({ text: c.text || undefined, html: c.html || undefined, png: c.image ? await blobToB64(c.image) : undefined }) : c.text;
+      const r = await fetch('clipboard/write', { method: 'POST', body, signal: stop.signal,
+        headers: rich ? { 'X-Vitals': '1', 'Content-Type': 'application/json' } : { 'X-Vitals': '1' } });
+      if (r.ok) { clip.wrote = (await r.json()).count; return releaseKeys(() => cmdKey(V, fromKeys)); }
+    } catch {} finally { clearTimeout(timer); clip.writing--; }
   }
   // No clipboard on the Mac's side: type it, key by key.
-  releaseKeys(() => text.length <= 5000 ? typeText(text) : toast('Couldn’t paste that on the Mac', true));
+  releaseKeys(() => c.text && c.text.length <= 5000 ? typeText(c.text) : toast('Couldn’t paste that on the Mac', true));
 }
 
 /** The menu's Paste: this device's clipboard, if the browser hands it over; otherwise a box to paste into. */
-function pasteFromHere() {
+async function pasteFromHere() {
+  if (navigator.clipboard?.read) {
+    try {
+      const [item] = await navigator.clipboard.read();
+      if (item) {
+        const get = t => item.types.includes(t) ? item.getType(t) : null;
+        const image = item.types.find(t => t.startsWith('image/'));
+        const [text, html, img] = await Promise.all([get('text/plain')?.then(b => b.text()), get('text/html')?.then(b => b.text()), image && item.getType(image)]);
+        if (text || html || img) return pasteToMac({ text, html, image: img });
+      }
+    } catch {}
+  }
   if (!navigator.clipboard?.readText) return openTyper();
   navigator.clipboard.readText().then(pasteToMac, openTyper);
 }
@@ -893,7 +982,7 @@ document.addEventListener('keydown', e => {
   else if (k === 'v') {
     e.stopPropagation();                      // not to noVNC, and no preventDefault: the paste must happen
     const box = $('clip'); box.value = ''; box.focus({ preventScroll: true });
-    // Nothing pasted (an image, or a browser that pastes nowhere): the Mac pastes its own clipboard.
+    // Nothing pasted (a browser that pastes nowhere): the Mac pastes its own clipboard.
     clip.pasting = setTimeout(() => { clip.pasting = 0; S.rfb?.focus(); cmdKey(keysyms.lookup(118), true); }, 300);
   }
 }, true);
@@ -901,12 +990,62 @@ document.addEventListener('paste', e => {
   if (!clip.pasting) return;
   e.preventDefault(); clearTimeout(clip.pasting); clip.pasting = 0;
   S.rfb?.focus();
-  pasteToMac(e.clipboardData?.getData('text/plain') ?? '', true);
+  const d = e.clipboardData;
+  const image = [...(d?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+  pasteToMac({ text: d?.getData('text/plain') || '', html: d?.getData('text/html') || '', image }, true);
 }, true);
 document.addEventListener('keyup', e => { if (e.key === 'Meta') letGoOfCmd(); }, true);
 // A ⌘ let go of where this page didn't see it (another window, a system shortcut): the next move notices.
 for (const type of ['pointerdown', 'pointermove']) document.addEventListener(type, e => { if (S.metaHeld && !e.metaKey) letGoOfCmd(); }, { capture: true, passive: true });
 window.addEventListener('blur', letGoOfCmd);
+
+// ---------- files: drop one on the screen (or pick one on a phone) and it lands in the Mac's Downloads ----------
+const MAX_FILE = 100 << 20;
+const sending = [];
+function sendFiles(list) {
+  if (!S.connected) return toast('Connect to the Mac first', true);
+  sending.push(...list);
+  if (sending.length === list.length) sendNext();
+}
+function sendNext() {
+  const f = sending[0]; if (!f) return;
+  const next = () => { sending.shift(); sendNext(); };
+  if (f.size > MAX_FILE) { toast(`“${short(f.name)}” is over 100 MB: too big to send`, true, 4000); return next(); }
+  const x = new XMLHttpRequest();
+  x.open('POST', 'file?name=' + encodeURIComponent(f.name));
+  x.setRequestHeader('X-Vitals', '1');
+  x.setRequestHeader('Content-Type', 'application/octet-stream');
+  const left = sending.length > 1 ? ` (${sending.length - 1} more after)` : '';
+  x.upload.onprogress = e => { if (e.lengthComputable) toast(`Sending “${short(f.name)}” ${Math.round(e.loaded / e.total * 100)}%${left}`, false, 0); touched(); };
+  x.onload = () => {
+    let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+    if (x.status === 200) toast(`Saved “${short(j.name || f.name)}” in Downloads on ${S.mac}`, false, 3500);
+    else toast(x.status === 409 ? 'The screen session ended: reconnect, then send it again'
+      : x.status === 413 ? `“${short(f.name)}” is too big to send` : j.error || `Couldn’t send “${short(f.name)}”`, true, 4000);
+    next();
+  };
+  x.onerror = () => { toast(`Couldn’t send “${short(f.name)}”`, true, 4000); next(); };
+  toast(`Sending “${short(f.name)}”…${left}`, false, 0);
+  touched();
+  x.send(f);
+}
+$('filePick').addEventListener('change', e => { const l = [...e.target.files]; e.target.value = ''; if (l.length) sendFiles(l); });
+// Anything dragged in is caught, so a file dropped beside the screen never replaces this page.
+let dragDepth = 0;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+document.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth++; if (S.connected) { $('dropNote').textContent = `It goes into Downloads on ${S.mac}`; show('drop'); } });
+document.addEventListener('dragover', e => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = S.connected ? 'copy' : 'none'; });
+document.addEventListener('dragleave', e => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; hide('drop'); } });
+document.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; hide('drop');
+  const items = [...(e.dataTransfer.items || [])];
+  // A folder arrives as a file of no use: say so rather than send it.
+  const files = items.filter(i => i.kind === 'file'), folders = files.filter(i => i.webkitGetAsEntry?.()?.isDirectory);
+  const list = files.length ? files.filter(i => !folders.includes(i)).map(i => i.getAsFile()).filter(Boolean) : [...e.dataTransfer.files];
+  if (folders.length) toast('Folders can’t be sent: zip it first', true, 3500);
+  if (list.length) sendFiles(list);
+});
 
 // Scrolling with a mouse or trackpad. noVNC sends at most one wheel step per event and drops the rest,
 // so a quick flick (a few large events) barely moved the Mac. Every real event becomes as many 50 px

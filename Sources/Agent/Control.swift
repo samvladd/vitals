@@ -273,8 +273,12 @@ func friendlyName(_ n: TailnetNode, among all: [TailnetNode]) -> String {
     return all.filter { guess($0) == g }.count > 1 ? n.name : g
 }
 
-/// This Mac, its account and the devices it can see, from `tailscale status --json`.
-func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
+/// A saved `tailscale status --json` to read instead of asking Tailscale (`serve --tailscale-status FILE`, for tests).
+var tailscaleStatusFile: String?
+
+/// `tailscale status --json`: this Mac, its account and every device it can see, and how it reaches each.
+func tailscaleStatus() -> [String: Any]? {
+    if let f = tailscaleStatusFile { return (try? Data(contentsOf: URL(fileURLWithPath: f))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } }
     guard let cli = tailscaleCLI else { return nil }
     let p = Process(), out = Pipe()
     p.executableURL = URL(fileURLWithPath: cli); p.arguments = ["status", "--json"]
@@ -285,7 +289,12 @@ func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
     guard (try? p.run()) != nil else { return nil }
     let data = out.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
-    guard let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let me = j["Self"] as? [String: Any] else { return nil }
+    return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+}
+
+/// This Mac, its account and the devices it can see, from `tailscale status --json`.
+func tailnet() -> (me: TailnetNode, login: String, nodes: [TailnetNode])? {
+    guard let j = tailscaleStatus(), let me = j["Self"] as? [String: Any] else { return nil }
     func node(_ d: [String: Any]) -> TailnetNode? {
         guard let dns = (d["DNSName"] as? String)?.lowercased(), !dns.isEmpty else { return nil }
         let host = dns.hasSuffix(".") ? String(dns.dropLast()) : dns
