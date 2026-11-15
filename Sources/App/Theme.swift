@@ -43,6 +43,10 @@ enum Theme {
     static func font(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         .monospacedDigitSystemFont(ofSize: size, weight: weight)
     }
+    /// Numbers that matter, as the kit sets them: monospaced (SF Mono here, Geist Mono there).
+    static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
+        .monospacedSystemFont(ofSize: size, weight: weight)
+    }
 }
 
 extension NSColor {

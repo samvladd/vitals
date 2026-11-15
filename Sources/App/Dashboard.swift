@@ -49,7 +49,7 @@ final class Dashboard: Canvas {
         arriving(1) { powerCard(l, s, x: pad, y: &left) }
         left += gap
         arriving(3) { fanCard(l, s, x: pad, y: &left) }
-        arriving(2) { pressureGrid(s, x: pad + colW + gap, y: &right) }
+        arriving(2) { pressureGrid(l, s, x: pad + colW + gap, y: &right) }
         right += gap
         arriving(4) { procCard(s, x: pad + colW + gap, y: &right, bottom: left) }
         let bottom = max(left, right)
@@ -192,10 +192,10 @@ final class Dashboard: Canvas {
 
         // The answer: watts now, counting to each new reading.
         let fy = top + 48
-        let big = Theme.font(36, .semibold)
-        let ws = s?.wSystem.map { Fmt.watts(glide("watts", $0)) } ?? "—"
-        drawText(ws, big, Theme.text, ix, fy - 2)
-        drawText("W", Theme.font(15, .medium), Theme.muted, ix + textWidth(ws, big) + 4, fy + 18)
+        let big = Theme.mono(34, .medium)
+        let ws = s?.wSystem.map { Fmt.watts(count("watts", $0)) } ?? "—"
+        let bw = drawNumber(ws, big, Theme.text, ix, fy)
+        drawText("W", Theme.font(15, .medium), Theme.muted, ix + bw + 5, fy + 17)
 
         let days = l.history?.days ?? []
         let today = days.last { $0.day == Self.dayString(Date()) }
@@ -437,10 +437,10 @@ final class Dashboard: Canvas {
             fy += 62
         }
         for (n, fan) in fans.enumerated() {
-            let rpmF = Theme.font(22, .semibold)
-            let rs = Fmt.rpm(glide("fan.rpm\(n)", fan.rpm))
-            drawText(rs, rpmF, Theme.text, ix, fy - 2)
-            drawText(fans.count > 1 ? "rpm · \(n == 0 ? "left" : "right")" : "rpm", Theme.font(12), Theme.muted, ix + textWidth(rs, rpmF) + 5, fy + 7)
+            let rpmF = Theme.mono(22, .medium)
+            let rs = Fmt.rpm(count("fan.rpm\(n)", fan.rpm))
+            let rw = drawNumber(rs, rpmF, Theme.text, ix, fy - 1)
+            drawText(fans.count > 1 ? "rpm · \(n == 0 ? "left" : "right")" : "rpm", Theme.font(12), Theme.muted, ix + rw + 5, fy + 7)
             let tgt = fan.manual ? "target \(Fmt.rpm(fan.target))" : "\(Int(((fan.rpm - fan.min) / max(1, fan.max - fan.min) * 100).rounded()))% of range"
             drawText(tgt, Theme.font(12), Theme.faint, ix + iw, fy + 7, align: .right)
 
@@ -503,20 +503,22 @@ final class Dashboard: Canvas {
 
     // MARK: pressure
 
-    private func pressureGrid(_ s: Snapshot?, x: CGFloat, y: inout CGFloat) {
-        let w = colW, cellW = w / 2, cellH: CGFloat = 110, top = y
-        card(NSRect(x: x, y: top, width: w, height: cellH * 3))
-        vline(x + cellW, top + 14, cellH * 3 - 28, Theme.line)
-        hline(x + 14, top + cellH, w - 28, Theme.line)
-        hline(x + 14, top + cellH * 2, w - 28, Theme.line)
+    /// Six stat tiles, the kit's KPI cards: a swatch and label, a monospaced number, and below it the
+    /// detail that explains the number (per-core bars, a two-minute sparkline, a meter or rates).
+    private func pressureGrid(_ l: HostLink, _ s: Snapshot?, x: CGFloat, y: inout CGFloat) {
+        let tg: CGFloat = 10, tw = (colW - tg) / 2, th: CGFloat = 112, top = y
+        func tileRect(_ i: Int) -> NSRect { NSRect(x: x + CGFloat(i % 2) * (tw + tg), y: top + CGFloat(i / 2) * (th + tg), width: tw, height: th) }
+        let inner = tw - 28
 
         // CPU: one bar per core, the chip drawn as itself; each bar glides to its core's load.
-        cell(x, top, "CPU", s?.cpu.map { Fmt.pct(glide("cpu", $0)) } ?? "—", sub: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
+        var r = tileRect(0)
+        tile(r, "CPU", swatch: Theme.accent, value: s?.cpu.map { Fmt.pct(count("cpu", $0)) } ?? "—",
+             note: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
         if let s, !s.cores.isEmpty {
-            let n = CGFloat(s.cores.count), bx = x + 14, bw0 = cellW - 28
+            let n = CGFloat(s.cores.count), bx = r.minX + 14
             let clusterGap: CGFloat = s.eCores > 0 ? 4 : 0
-            let bw = (bw0 - (n - 1) * 2 - clusterGap) / n
-            let by = top + 64, bh: CGFloat = 28
+            let bw = (inner - (n - 1) * 2 - clusterGap) / n
+            let by = r.minY + 66, bh: CGFloat = 26
             for (i, c) in s.cores.enumerated() {
                 let cx = bx + CGFloat(i) * (bw + 2) + (i >= s.eCores && s.eCores > 0 ? clusterGap : 0)
                 fill(NSRect(x: cx, y: by, width: bw, height: bh), Theme.raised, radius: min(2, bw / 2))
@@ -524,94 +526,108 @@ final class Dashboard: Canvas {
                 let fh = max(2, bh * CGFloat(load))
                 fill(NSRect(x: cx, y: by + bh - fh, width: bw, height: fh), Theme.accent.withAlphaComponent(0.45 + 0.55 * CGFloat(load)), radius: min(2, bw / 2))
             }
-            let legend = s.eCores > 0 ? "\(s.eCores) E-cores · \(s.cores.count - s.eCores) P-cores" : "\(s.cores.count) cores"
-            drawText(legend, Theme.font(11), Theme.faint, bx, by + bh + 4)
+            let legend = s.eCores > 0 ? "\(s.eCores) E · \(s.cores.count - s.eCores) P cores" : "\(s.cores.count) cores"
+            drawText(legend, Theme.font(11), Theme.faint, bx, by + bh + 4, maxWidth: inner)
         }
 
-        // Memory.
-        let mx = x + cellW
+        // Memory: used of total, the pressure macOS reports, and the last two minutes.
+        r = tileRect(1)
         if let s {
-            cell(mx, top, "Memory", Fmt.gb(glide("mem", s.memUsed)), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB")
             let p = s.pressure >= 4 ? ("Critical", Theme.pillBad) : s.pressure >= 2 ? ("Warning", Theme.pillWarn) : ("Normal", Theme.pillGood)
-            pill(p.0, p.1, right: mx + cellW - 14, top + 13)
-            let bar = NSRect(x: mx + 14, y: top + 67, width: cellW - 28, height: 8)
-            fill(bar, Theme.raised, radius: 4)
-            var bx = bar.minX
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(roundedRect: bar, xRadius: 4, yRadius: 4).addClip()
-            for (key, v, c) in [("mem.app", s.memApp + s.memWired, Theme.series3), ("mem.zip", s.memCompressed, Theme.chart3)] {
-                let pw = bar.width * CGFloat(glide(key, max(0, v) / max(1, s.memTotal)))
-                fill(NSRect(x: bx, y: bar.minY, width: pw, height: bar.height), c); bx += pw + 1.5
-            }
-            NSGraphicsContext.restoreGraphicsState()
-            fill(NSRect(x: mx + 14, y: top + 83, width: 7, height: 7), Theme.chart3, radius: 3.5)
-            drawText("\(Fmt.gb(s.memCompressed)) GB compressed", Theme.font(11), Theme.faint, mx + 26, top + 79, maxWidth: cellW - 40)
-            let swap = s.swapTotal > 0 ? "Swap \(Fmt.gb(s.swapUsed)) of \(Fmt.gb(s.swapTotal)) GB" : "No swap in use"
-            drawText(swap, Theme.font(11), s.swapUsed > 1_073_741_824 ? Theme.warning : Theme.faint, mx + 14, top + 93)
-        } else { cell(mx, top, "Memory", "—") }
+            tile(r, "Memory", swatch: Theme.series3, value: Fmt.gb(count("mem", s.memUsed)), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB", pill: p)
+            spark(l.trend["mem"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: Theme.series3, minSpan: 4)
+            let swap = s.swapUsed > 0 ? "\(Fmt.gb(s.swapUsed)) GB in swap" : "\(Fmt.gb(s.memCompressed)) GB compressed"
+            drawText(swap, Theme.font(11), s.swapUsed > 1_073_741_824 ? Theme.warning : Theme.faint,
+                     r.minX + 14, r.minY + 92, maxWidth: inner)
+        } else { tile(r, "Memory", swatch: Theme.series3, value: "—") }
 
-        // Temperature.
-        let ty = top + cellH
-        cell(x, ty, "Thermal", s?.tCPU.map { Fmt.temp(glide("temp", $0)) } ?? "—", unit: s?.tCPU == nil ? nil : "CPU", sub: nil)
+        // Thermal: the hottest CPU sensor, macOS's thermal state, and the last two minutes.
+        r = tileRect(2)
         if let s {
             let states = [("Nominal", Theme.pillGood), ("Fair", Theme.pillWarn), ("Serious", Theme.pillBad), ("Critical", Theme.pillBad)]
-            let st = states[min(3, max(0, s.thermal))]
-            pill(st.0, st.1, right: x + cellW - 14, ty + 13)
-            // A scale from 30° to 105° with the hottest sensor on it: neutral until it gets warm.
-            let bar = NSRect(x: x + 14, y: ty + 67, width: cellW - 28, height: 8)
-            if let hot = s.tCPU {
-                let hc = hot >= 90 ? Theme.negative : hot >= 80 ? Theme.warning : Theme.soft
-                meter("temp.bar", bar, (hot - 30) / 75, hc)
-            } else { fill(bar, Theme.raised, radius: 4) }
+            let hot = s.tCPU ?? 0
+            let tone = hot >= 90 ? Theme.negative : hot >= 80 ? Theme.warning : Theme.soft
+            tile(r, "Thermal", swatch: tone, value: s.tCPU.map { Fmt.temp(count("temp", $0)) } ?? "—", unit: s.tCPU == nil ? nil : "CPU",
+                 pill: states[min(3, max(0, s.thermal))])
+            spark(l.trend["temp"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: tone, minSpan: 6)
             var parts: [String] = []
             if let g = s.tGPU { parts.append("GPU \(Fmt.temp(g))") }
             if let d = s.tSSD { parts.append("SSD \(Fmt.temp(d))") }
             if parts.count < 2, let b = s.battery?.temp { parts.append("battery \(Fmt.temp(b))") }
-            drawText(parts.joined(separator: " · "), Theme.font(11), Theme.faint, x + 14, ty + 79, maxWidth: cellW - 28)
-            drawText("30°", Theme.font(11), Theme.faint, x + 14, ty + 93)
-            drawText("105°", Theme.font(11), Theme.faint, x + cellW - 14, ty + 93, align: .right)
-        }
+            drawText(parts.joined(separator: " · "), Theme.font(11), Theme.faint, r.minX + 14, r.minY + 92, maxWidth: inner)
+        } else { tile(r, "Thermal", swatch: Theme.soft, value: "—") }
 
-        // GPU.
-        cell(mx, ty, "GPU", s?.gpu.map { Fmt.pct(glide("gpu", $0)) } ?? "—", sub: nil)
+        // GPU: busy share, what it draws, and the last two minutes.
+        r = tileRect(3)
+        tile(r, "GPU", swatch: Theme.chart2, value: s?.gpu.map { Fmt.pct(count("gpu", $0)) } ?? "—")
         if let s {
-            meter("gpu.bar", NSRect(x: mx + 14, y: ty + 67, width: cellW - 28, height: 8), (s.gpu ?? 0) / 100, Theme.chart2)
-            drawText("drawing \(Fmt.wattsUnit(s.wGPU))", Theme.font(11), Theme.faint, mx + 14, ty + 79)
-            drawText("Neural Engine \(Fmt.wattsUnit(s.wANE))", Theme.font(11), Theme.faint, mx + 14, ty + 93)
+            spark(l.trend["gpu"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: Theme.chart2, minSpan: 10)
+            drawText("drawing \(Fmt.wattsUnit(s.wGPU))", Theme.font(11), Theme.faint, r.minX + 14, r.minY + 92, maxWidth: inner)
         }
 
-        // Storage: the boot drive, then any other local drive.
-        let sy = top + cellH * 2
+        // Storage: the boot drive free, then any other local drive.
+        r = tileRect(4)
         if let s, let boot = s.volumes.first(where: \.boot) ?? s.volumes.first {
-            cell(x, sy, "Storage", Fmt.size(boot.free), unit: "free")
             let freeShare = boot.free / max(1, boot.total)
-            if freeShare < 0.05 || boot.free < 8e9 { pill("Almost full", Theme.pillBad, right: x + cellW - 14, sy + 13) }
-            else if freeShare < 0.12 { pill("Low", Theme.pillWarn, right: x + cellW - 14, sy + 13) }
+            let p = freeShare < 0.05 || boot.free < 8e9 ? ("Almost full", Theme.pillBad) : freeShare < 0.12 ? ("Low", Theme.pillWarn) : nil
+            let size = Fmt.size(boot.free).split(separator: " ").map(String.init)
+            tile(r, "Storage free", swatch: Theme.soft, value: size.first ?? "—", unit: size.count > 1 ? size[1] : nil, pill: p)
             let usedColor = freeShare < 0.05 ? Theme.negative : freeShare < 0.12 ? Theme.warning : Theme.soft
-            meter("disk.bar", NSRect(x: x + 14, y: sy + 67, width: cellW - 28, height: 8), 1 - freeShare, usedColor)
-            drawText("\(Fmt.size(boot.total - boot.free)) of \(Fmt.size(boot.total)) used", Theme.font(11), Theme.faint, x + 14, sy + 79, maxWidth: cellW - 28)
-            let others = s.volumes.filter { $0 != boot }
-            let more = others.first.map { "\($0.name) · \(Fmt.size($0.free)) free" + (others.count > 1 ? " +\(others.count - 1)" : "") } ?? boot.name
-            drawText(more, Theme.font(11), Theme.faint, x + 14, sy + 93, maxWidth: cellW - 28)
-        } else { cell(x, sy, "Storage", "—") }
+            meter("disk.bar", NSRect(x: r.minX + 14, y: r.minY + 70, width: inner, height: 6), 1 - freeShare, usedColor, track: Theme.raisedHi)
+            drawText("\(Fmt.size(boot.total - boot.free)) of \(Fmt.size(boot.total)) used", Theme.font(11), Theme.faint, r.minX + 14, r.minY + 86, maxWidth: inner)
+        } else { tile(r, "Storage free", swatch: Theme.soft, value: "—") }
 
         // Network and disk throughput.
-        drawText("Network and disk", Theme.font(12, .medium), Theme.muted, mx + 14, sy + 14)
+        r = tileRect(5)
+        card(r, radius: 14)
+        drawText("Network · disk", Theme.font(12, .medium), Theme.muted, r.minX + 14, r.minY + 13)
         let rows: [(String, Double?)] = [("in", s?.netIn), ("out", s?.netOut), ("read", s?.diskRead), ("write", s?.diskWrite)]
         for (j, (name, v)) in rows.enumerated() {
-            let ry = sy + 34 + CGFloat(j) * 17
-            drawText(name, Theme.font(12), Theme.muted, mx + 14, ry)
-            drawText(Fmt.rate(v), Theme.font(12, .medium), Theme.text, mx + cellW - 14, ry, align: .right)
+            let ry = r.minY + 36 + CGFloat(j) * 17
+            drawText(name, Theme.font(12), Theme.muted, r.minX + 14, ry)
+            drawText(Fmt.rate(v), Theme.font(12, .medium), Theme.text, r.maxX - 14, ry, align: .right)
         }
-        y = top + cellH * 3
+        y = top + th * 3 + tg * 2
     }
 
-    private func cell(_ x: CGFloat, _ y: CGFloat, _ label: String, _ value: String, unit: String? = nil, sub: String? = nil) {
-        drawText(label, Theme.font(12, .medium), Theme.muted, x + 14, y + 14)
-        let vf = Theme.font(24, .semibold)
-        drawText(value, vf, Theme.text, x + 14, y + 32)
-        if let unit { drawText(unit, Theme.font(13), Theme.muted, x + 14 + textWidth(value, vf) + 4, y + 42) }
-        if let sub { drawText(sub, Theme.font(11), Theme.faint, x + colW / 2 - 14, y + 15, align: .right) }
+    /// One stat tile: a swatch and label (a state pill or a note at the right), then the number.
+    private func tile(_ r: NSRect, _ label: String, swatch: NSColor, value: String, unit: String? = nil,
+                      pill p: (String, (NSColor, NSColor))? = nil, note: String? = nil) {
+        card(r, radius: 14)
+        fill(NSRect(x: r.minX + 14, y: r.minY + 17, width: 8, height: 8), swatch, radius: 3)
+        drawText(label, Theme.font(12, .medium), Theme.muted, r.minX + 28, r.minY + 13)
+        if let p { pill(p.0, p.1, right: r.maxX - 12, r.minY + 12) }
+        else if let note { drawText(note, Theme.font(11), Theme.faint, r.maxX - 14, r.minY + 14, align: .right) }
+        let vf = Theme.mono(22, .medium)
+        let vw = drawNumber(value, vf, Theme.text, r.minX + 14, r.minY + 33)
+        if let unit { drawText(unit, Theme.font(12), Theme.muted, r.minX + 14 + vw + 4, r.minY + 42, maxWidth: r.width - 32 - vw) }
+    }
+
+    /// A two-minute sparkline in a series colour, with the kit's faint area under it and the newest
+    /// reading marked. Scaled to its own range (at least `minSpan`), so small movements still show.
+    private func spark(_ values: [Double]?, in r: NSRect, color: NSColor, minSpan: Double) {
+        guard let v = values, v.count > 1 else {
+            hline(r.minX, r.midY, r.width, Theme.line2, dash: true); return
+        }
+        var lo = v.min()!, hi = v.max()!
+        if hi - lo < minSpan { let mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2 }
+        let slots = Double(max(v.count - 1, 30))
+        func pt(_ i: Int) -> NSPoint {
+            NSPoint(x: r.maxX - CGFloat(Double(v.count - 1 - i) / slots) * r.width,
+                    y: r.maxY - CGFloat((v[i] - lo) / (hi - lo)) * r.height)
+        }
+        let line = NSBezierPath(); line.move(to: pt(0))
+        for i in 1..<v.count { line.line(to: pt(i)) }
+        let area = line.copy() as! NSBezierPath
+        area.line(to: NSPoint(x: pt(v.count - 1).x, y: r.maxY)); area.line(to: NSPoint(x: pt(0).x, y: r.maxY)); area.close()
+        let reveal = drawIn()
+        NSGraphicsContext.saveGraphicsState()
+        NSRect(x: r.minX - 2, y: r.minY - 3, width: (r.width + 4) * reveal, height: r.height + 6).clip()
+        color.withAlphaComponent(0.16).setFill(); area.fill()
+        line.lineWidth = 1.75; line.lineJoinStyle = .round; line.lineCapStyle = .round
+        color.setStroke(); line.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+        if reveal >= 1 { let p = pt(v.count - 1); fill(NSRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5), color, radius: 2.5) }
     }
 
     // MARK: network and disk
@@ -635,7 +651,7 @@ final class Dashboard: Canvas {
             let ry = top + 40 + CGFloat(i) * 27
             if i > 0 { hline(ix, ry - 4, iw, Theme.line) }
             drawText(p.name, Theme.font(13), Theme.text, ix, ry, maxWidth: cpuX - ix - 48)
-            drawText(String(format: "%.1f%%", p.cpu), Theme.font(13, .medium), Theme.text, cpuX, ry, align: .right)
+            drawText(String(format: "%.1f%%", p.cpu), Theme.mono(12.5, .medium), Theme.text, cpuX, ry + 1, align: .right)
             drawText("\(Fmt.gb(p.mem)) GB", Theme.font(13), Theme.muted, memX, ry, align: .right)
             // A share bar under the name, gliding; the top process in the CPU's colour. Keyed by
             // name so a process keeps its bar when the order changes.

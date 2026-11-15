@@ -86,6 +86,22 @@ class Canvas: NSView {
         return from
     }
 
+    /// A number that counts up from zero when the panel opens, then simply shows each new reading.
+    /// Rolling the digits to every once-a-second reading reads as ticking, not as smoothness.
+    func count(_ key: String, _ target: Double) -> Double {
+        if Self.reduceMotion() { return target }
+        touched.insert(key)
+        if var t = tweens[key] {
+            guard now < t.start + t.dur else { t.to = target; t.from = target; tweens[key] = t; return target }
+            t.to = target; tweens[key] = t      // still counting up: carry on, to the newest reading
+            moving = true
+            return value(t)
+        }
+        tweens[key] = Tween(from: revealing ? 0 : target, to: target, start: now, dur: 0.9, bounce: false)
+        if revealing { moving = true; return 0 }
+        return target
+    }
+
     private func value(_ t: Tween) -> Double {
         let p = min(1, max(0, (now - t.start) / t.dur))
         // Ease out (the kit's --out), or a soft spring that settles past and back.
@@ -255,6 +271,16 @@ func drawText(_ s: String, _ font: NSFont, _ color: NSColor, _ x: CGFloat, _ y: 
 }
 
 func textWidth(_ s: String, _ font: NSFont) -> CGFloat { (s as NSString).size(withAttributes: [.font: font]).width }
+
+/// A large number, tightened as the kit sets its figures (−0.02 em); returns its width.
+@discardableResult
+func drawNumber(_ s: String, _ font: NSFont, _ color: NSColor, _ x: CGFloat, _ y: CGFloat, align: Align = .left) -> CGFloat {
+    let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .kern: -0.02 * font.pointSize]
+    let w = (s as NSString).size(withAttributes: attrs).width
+    let ox = align == .left ? x : align == .right ? x - w : x - w / 2
+    (s as NSString).draw(at: NSPoint(x: ox, y: y), withAttributes: attrs)
+    return w
+}
 
 func fill(_ r: NSRect, _ c: NSColor, radius: CGFloat = 0) {
     c.setFill()
