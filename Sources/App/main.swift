@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboard.onSetup = { [weak self] l in self?.setup(l, remove: false) }
         dashboard.onOpenLogs = { [weak self] in self?.openLogs() }
         dashboard.onHeight = { [weak self] h in if self?.settings == nil { self?.resize(h) } }
-        dashboard.selectionChanged = { [weak self] in self?.applyIntervals(); self?.dashboard.link.fetchHistory(); self?.dashboard.needsDisplay = true }
+        dashboard.selectionChanged = { [weak self] in self?.applyIntervals(); self?.dashboard.link.fetchHistory(); self?.dashboard.reveal(); self?.dashboard.needsDisplay = true }
 
         panel = DropPanel(contentRect: dashboard.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.isFloatingPanel = true
@@ -39,10 +39,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let container = NSView(frame: dashboard.frame)
         container.wantsLayer = true
-        container.layer?.cornerRadius = 14
+        container.layer?.cornerRadius = 16
         container.layer?.masksToBounds = true
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = Theme.line.cgColor
+        container.layer?.borderColor = Theme.line2.cgColor
+        // macOS 26 and later: the panel is Liquid Glass, tinted graphite so the numbers stay easy to
+        // read over any wallpaper. Earlier systems keep the solid graphite ground.
+        if #available(macOS 26.0, *), !CommandLine.arguments.contains("--no-glass") {
+            let glass = NSGlassEffectView(frame: container.bounds)
+            glass.autoresizingMask = [.width, .height]
+            glass.cornerRadius = 16
+            glass.style = .regular
+            glass.tintColor = Theme.ground.withAlphaComponent(0.6)
+            container.addSubview(glass)
+            container.layer?.backgroundColor = Theme.ground.withAlphaComponent(0.35).cgColor
+            Theme.glass = true
+        }
         container.addSubview(dashboard)
         dashboard.autoresizingMask = [.width, .height]
         panel.contentView = container
@@ -58,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // `--render <dir>`: draw the panel to PNG files and quit (for design review).
         if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine.arguments.count {
+            Canvas.still = true
             let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
             // Settings is made early so the Tailscale suggestions have time to arrive.
             var preview: SettingsView?
@@ -277,6 +290,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         x = min(max(x, screen.visibleFrame.minX + 8), screen.visibleFrame.maxX - size.width - 8)
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: r.minY - 6))
         panel.contentView?.isHidden = false
+        // Arrive: the panel fades in while its cards rise and its numbers count up.
+        dashboard.reveal()
+        if !Canvas.reduceMotion() {
+            panel.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { c in
+                c.duration = 0.18
+                c.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+                panel.animator().alphaValue = 1
+            }
+        } else { panel.alphaValue = 1 }
         panel.orderFrontRegardless()
         panel.makeKey()
         applyIntervals()

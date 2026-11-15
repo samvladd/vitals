@@ -22,12 +22,173 @@ class Canvas: NSView {
     override func draw(_ dirty: NSRect) {
         let t0 = CFAbsoluteTimeGetCurrent()
         hits.removeAll(keepingCapacity: true)
+        now = CACurrentMediaTime()
+        moving = false
         if scrollY != 0 { NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -scrollY) }
+        touched.removeAll(keepingCapacity: true)
         render()
+        // Forget values that were not drawn this time (a process that quit, a Mac switched away from).
+        if tweens.count > touched.count { tweens = tweens.filter { touched.contains($0.key) } }
+        revealing = false
+        moving ? startFrames() : stopFrames()
         Canvas.draws += 1; Canvas.drawTime += CFAbsoluteTimeGetCurrent() - t0
     }
 
     func render() {}
+
+    // MARK: motion (the Aegis kit's count, draw and glide)
+    //
+    // Values glide to each new reading instead of jumping; on open the cards arrive one after another,
+    // numbers count up and the chart draws itself in. Frames run only while something is moving, so a
+    // still panel costs nothing, and Reduce Motion turns all of it off.
+
+    private struct Tween { var from, to: Double; var start: CFTimeInterval; var dur: Double; var bounce: Bool }
+    private var tweens: [String: Tween] = [:]
+    private var touched: Set<String> = []
+    private var frameTimer: Timer?
+    private var now: CFTimeInterval = 0
+    private var moving = false
+    /// True for the first draw after `reveal()`: every value starts from zero.
+    private var revealing = false
+    private var revealAt: CFTimeInterval = -10
+    /// Off for Reduce Motion, and for `--render`, whose snapshots must show values at rest.
+    static var still = false
+    static let reduceMotion = { still || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    /// Replays the arrival: cards rise in, numbers count up from zero, charts draw.
+    func reveal() {
+        tweens.removeAll()
+        guard !Self.reduceMotion() else { return }
+        revealing = true
+        revealAt = CACurrentMediaTime()
+        needsDisplay = true
+    }
+
+    /// The value to draw for `key` now, gliding to `target` whenever it changes. `bounce` adds the
+    /// kit's soft spring overshoot (for things that slide, not for numbers).
+    func glide(_ key: String, _ target: Double, dur: Double = 0.34, bounce: Bool = false) -> Double {
+        if Self.reduceMotion() { return target }
+        touched.insert(key)
+        if var t = tweens[key] {
+            let cur = value(t)
+            if abs(t.to - target) > 1e-6 {
+                t = Tween(from: cur, to: target, start: now, dur: dur, bounce: bounce)
+                tweens[key] = t
+                moving = true
+                return cur
+            }
+            if now < t.start + t.dur { moving = true }
+            return cur
+        }
+        let from = revealing ? 0 : target
+        tweens[key] = Tween(from: from, to: target, start: now, dur: revealing ? 0.9 : dur, bounce: bounce)
+        if from != target { moving = true }
+        return from
+    }
+
+    private func value(_ t: Tween) -> Double {
+        let p = min(1, max(0, (now - t.start) / t.dur))
+        // Ease out (the kit's --out), or a soft spring that settles past and back.
+        let e = t.bounce ? 1 + 2.2 * pow(p - 1, 3) + 1.2 * pow(p - 1, 2) : 1 - pow(1 - p, 3)
+        return t.from + (t.to - t.from) * e
+    }
+
+    /// How far the arrival has got for the `index`th card: 0 → 1 over 0.56 s, 60 ms apart.
+    func arrival(_ index: Int) -> CGFloat {
+        let p = (now - revealAt - Double(index) * 0.06) / 0.56
+        if p < 1 { moving = true }
+        return CGFloat(1 - pow(1 - min(1, max(0, p)), 3))
+    }
+
+    private var chartAt: CFTimeInterval = -10
+    /// Draws the chart in again (a new range), without replaying the rest.
+    func replayChart() { if !Self.reduceMotion() { chartAt = CACurrentMediaTime() - 0.12; needsDisplay = true } }
+
+    /// The chart's draw-in: 0 → 1 over 0.9 s after the arrival.
+    func drawIn() -> CGFloat {
+        let p = (now - max(revealAt, chartAt) - 0.12) / 0.9
+        if p < 1 { moving = true }
+        return CGFloat(1 - pow(1 - min(1, max(0, p)), 3))
+    }
+
+    /// Draws `body` faded and lifted by how far its arrival has got.
+    func arriving(_ index: Int, _ body: () -> Void) {
+        let a = arrival(index)
+        guard a < 1, let g = NSGraphicsContext.current?.cgContext else { body(); return }
+        g.saveGState()
+        g.setAlpha(a)
+        g.translateBy(x: 0, y: (1 - a) * 10)
+        body()
+        g.restoreGState()
+    }
+
+    // MARK: kit parts
+
+    /// A card: graphite with a hairline border and a lit top edge (the kit's --e1), never a hard shadow.
+    func card(_ r: NSRect, radius: CGFloat = 16) {
+        fill(r, Theme.card, radius: radius)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).addClip()
+        fill(NSRect(x: r.minX, y: r.minY, width: r.width, height: 1), Theme.edge)
+        NSGraphicsContext.restoreGraphicsState()
+        stroke(r, Theme.line, radius: radius)
+    }
+
+    /// A rounded meter whose fill glides to `frac` (0…1).
+    func meter(_ key: String, _ r: NSRect, _ frac: Double, _ color: NSColor, track: NSColor = Theme.raised) {
+        fill(r, track, radius: r.height / 2)
+        let f = min(1, max(0, glide(key, min(1, max(0, frac)))))
+        guard f > 0.002 else { return }
+        fill(NSRect(x: r.minX, y: r.minY, width: max(r.height, r.width * CGFloat(f)), height: r.height), color, radius: r.height / 2)
+    }
+
+    /// A segmented control whose selection slides to the choice (the kit's "every choice moves").
+    /// `primary` makes the chosen one the kit's main action: off-white with dark text. Hit ids are
+    /// "<id>.<item id>", which the self-test clicks by name.
+    func segmented(_ id: String, _ items: [(id: String, label: String)], selected: Int, in track: NSRect,
+                   enabled: Bool = true, primary: Bool = false, _ action: @escaping (Int) -> Void) {
+        let rad = track.height / 2
+        fill(track, Theme.sunk, radius: rad)
+        stroke(track, Theme.line, radius: rad)
+        let segW = (track.width - 4) / CGFloat(items.count)
+        if items.indices.contains(selected) {
+            let pos = glide("seg.\(id)", Double(selected), dur: 0.42, bounce: true)
+            let knob = NSRect(x: track.minX + 2 + CGFloat(pos) * segW, y: track.minY + 2, width: segW, height: track.height - 4)
+            fill(knob, primary ? (enabled ? Theme.text : Theme.chart3) : Theme.raisedHi, radius: knob.height / 2)
+            if !primary { stroke(knob, Theme.line2, radius: knob.height / 2) }
+        }
+        let f = Theme.font(12, .medium)
+        for (i, item) in items.enumerated() {
+            let r = NSRect(x: track.minX + 2 + CGFloat(i) * segW, y: track.minY + 2, width: segW, height: track.height - 4)
+            let hov = enabled && hit(r, "\(id).\(item.id)") { _ in action(i) }
+            let on = i == selected
+            let c: NSColor = on ? (primary ? Theme.ground : Theme.text) : !enabled ? Theme.faint : hov ? Theme.text : Theme.muted
+            drawText(item.label, f, c, r.midX, r.midY - 8, align: .center)
+        }
+    }
+
+    /// A button: `primary` is the kit's off-white main action, otherwise a raised graphite one.
+    @discardableResult
+    func button(_ id: String, _ label: String, at r: NSRect, primary: Bool = false, _ action: @escaping () -> Void) -> NSRect {
+        let hov = hit(r, id) { _ in action() }
+        let rad = r.height / 2
+        if primary {
+            fill(r, hov ? NSColor.white : Theme.text, radius: rad)
+        } else {
+            fill(r, hov ? Theme.raisedHi : Theme.raised, radius: rad)
+            stroke(r, hov ? Theme.line3 : Theme.line2, radius: rad)
+        }
+        drawText(label, Theme.font(12, .semibold), primary ? Theme.ground : Theme.text, r.midX, r.midY - 8, align: .center)
+        return r
+    }
+
+    private func startFrames() {
+        guard frameTimer == nil else { return }
+        let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.needsDisplay = true }
+        RunLoop.main.add(t, forMode: .common)
+        frameTimer = t
+    }
+    private func stopFrames() { frameTimer?.invalidate(); frameTimer = nil }
 
     /// Registers a clickable region; returns whether it is hovered (for hover styling).
     @discardableResult

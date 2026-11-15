@@ -39,21 +39,21 @@ final class Dashboard: Canvas {
     private var colW: CGFloat { (Self.width - pad * 2 - gap) / 2 }
 
     override func render() {
-        fill(bounds, Theme.ground)
+        fill(bounds, Theme.backdrop)
         let l = link, s = l.snap
         var y = header()
-        title(l, s, &y)
+        arriving(0) { title(l, s, &y) }
         let top = y
         var left = top, right = top
-        powerCard(l, s, x: pad, y: &left)
-        let fanTop = left + gap
-        left = fanTop
-        fanCard(l, s, x: pad, y: &left)
-        pressureGrid(s, x: pad + colW + gap, y: &right)
+        // The cards arrive left column first, then right, 60 ms apart.
+        arriving(1) { powerCard(l, s, x: pad, y: &left) }
+        left += gap
+        arriving(3) { fanCard(l, s, x: pad, y: &left) }
+        arriving(2) { pressureGrid(s, x: pad + colW + gap, y: &right) }
         right += gap
-        procCard(s, x: pad + colW + gap, y: &right, bottom: left)
+        arriving(4) { procCard(s, x: pad + colW + gap, y: &right, bottom: left) }
         let bottom = max(left, right)
-        footer(l, s, y: bottom + 10)
+        arriving(5) { footer(l, s, y: bottom + 10) }
         let h = bottom + 48
         measured = h
         if abs(h - frame.height) > 0.5 { DispatchQueue.main.async { self.onHeight?(h) } }
@@ -66,12 +66,13 @@ final class Dashboard: Canvas {
     /// Mac still one click away, and the first row sums up the fleet instead.
     private func header() -> CGFloat {
         // The mark: the Mac mini seen from above, with its one status light.
-        let m = NSRect(x: pad, y: 18, width: 18, height: 18)
-        fill(m, Theme.accent, radius: 5)
-        fill(NSRect(x: m.midX - 2, y: m.maxY - 6, width: 4, height: 2), Theme.ground, radius: 1)
-        drawText("Vitals", Theme.font(14, .semibold), Theme.text, pad + 26, 18)
+        // The mark, in the kit's off-white (its one accent): the Mac mini from above, with its status light.
+        let m = NSRect(x: pad, y: 17, width: 20, height: 20)
+        fill(m, Theme.text, radius: 6)
+        fill(NSRect(x: m.midX - 2.5, y: m.maxY - 6.5, width: 5, height: 2.5), Theme.ground, radius: 1.25)
+        drawText("Vitals", Theme.font(14, .semibold), Theme.text, pad + 28, 18)
         let current = link
-        func dot(_ l: HostLink) -> NSColor { switch l.state { case .live: return Theme.accent; case .offline: return Theme.negative; default: return Theme.warning } }
+        func dot(_ l: HostLink) -> NSColor { switch l.state { case .live: return Theme.good; case .offline: return Theme.negative; default: return Theme.warning } }
 
         guard links.count > 3 else {
             var x = Self.width - pad
@@ -102,8 +103,8 @@ final class Dashboard: Canvas {
             let r = NSRect(x: x, y: 48, width: min(natural[i], cap) + inner, height: 26)
             let active = l === current
             let hovered = hit(r, "tab.\(l.key)") { [weak self] _ in Prefs.selected = l.key; self?.selectionChanged() }
-            fill(r, active ? Theme.raised : Theme.ground, radius: 13)
-            stroke(r, active ? Theme.chart3 : hovered ? Theme.chart4 : Theme.line, radius: 13)
+            fill(r, active ? Theme.raisedHi : hovered ? Theme.raised : Theme.sunk, radius: 13)
+            stroke(r, active ? Theme.line3 : hovered ? Theme.line2 : Theme.line, radius: 13)
             fill(NSRect(x: r.minX + 12, y: r.midY - 3, width: 6, height: 6), dot(l), radius: 3)
             drawText(names[i], f, active || hovered ? Theme.text : Theme.muted, r.minX + 22, r.minY + 5, maxWidth: cap)
             x = r.maxX + spacing
@@ -119,13 +120,10 @@ final class Dashboard: Canvas {
         drawText(l.shortName, Theme.font(20, .semibold), Theme.text, pad, y)
         // Straight to this Mac's screen or its phone dashboard, in the browser, when it has them.
         var px = pad + textWidth(l.shortName, Theme.font(20, .semibold)) + 14
-        for (id, label, url, accent) in [("screen", "Screen", l.info?.screen, true), ("web", "Dashboard", l.info?.dashboard, false)] {
+        for (id, label, url, primary) in [("screen", "Screen", l.info?.screen, true), ("web", "Dashboard", l.info?.dashboard, false)] {
             guard let url = url.flatMap(URL.init(string:)) else { continue }
-            let f = Theme.font(12, .semibold), w = textWidth(label, f) + 24
-            let r = NSRect(x: px, y: y + 2, width: w, height: 24)
-            let hov = hit(r, "title.\(id)") { _ in NSWorkspace.shared.open(url) }
-            fill(r, accent ? (hov ? Theme.accent : Theme.accent.withAlphaComponent(0.85)) : (hov ? Theme.text.withAlphaComponent(0.18) : Theme.raised), radius: 12)
-            drawText(label + " ›", f, accent ? Theme.ground : Theme.text, r.minX + 12, y + 7)
+            let w = textWidth(label + " ›", Theme.font(12, .semibold)) + 26
+            button("title.\(id)", label + " ›", at: NSRect(x: px, y: y + 2, width: w, height: 26), primary: primary) { NSWorkspace.shared.open(url) }
             px += w + 8
         }
         if let i = l.info {
@@ -135,8 +133,12 @@ final class Dashboard: Canvas {
             drawText(name, Theme.font(12), Theme.faint, Self.width - pad, y + 7, align: .right)
         }
         y += 30
+        // The finding, led by a status light in its colour: green when all is easy.
         let (line, tone) = finding(l, s)
-        drawText(line, Theme.font(13), tone, pad, y, maxWidth: Self.width - pad * 2 - 130)
+        let light = tone == Theme.muted ? (l.state == .live ? Theme.good : Theme.faint) : tone == Theme.text ? Theme.accent : tone
+        fill(NSRect(x: pad, y: y + 5, width: 8, height: 8), light, radius: 4)
+        fill(NSRect(x: pad - 3, y: y + 2, width: 14, height: 14), light.withAlphaComponent(0.18), radius: 7)
+        drawText(line, Theme.font(13), tone == Theme.muted ? Theme.soft : tone, pad + 18, y, maxWidth: Self.width - pad * 2 - 148)
         let stamp: String
         switch l.state {
         case .live: stamp = "Live · " + Fmt.clock(s?.t ?? 0, seconds: true)
@@ -180,67 +182,67 @@ final class Dashboard: Canvas {
         let w = colW, top = y
         let isBattery = s?.battery != nil
         let h: CGFloat = isBattery ? 328 : 306
-        fill(NSRect(x: x, y: top, width: w, height: h), Theme.surface, radius: 14)
+        card(NSRect(x: x, y: top, width: w, height: h))
         let ix = x + 16, iw = w - 32
-        drawText("Power", Theme.font(13, .semibold), Theme.text, ix, top + 14)
-        var tx = ix + iw
-        for (i, r) in ranges.enumerated().reversed() {
-            let f = Theme.font(12, i == Prefs.range ? .semibold : .regular)
-            let rw = textWidth(r, f)
-            let hov = hit(NSRect(x: tx - rw - 5, y: top + 8, width: rw + 10, height: 26), "range.\(i)") { [weak self] _ in Prefs.range = i; self?.needsDisplay = true }
-            drawText(r, f, i == Prefs.range || hov ? Theme.text : Theme.faint, tx, top + 15, align: .right)
-            if i == Prefs.range { fill(NSRect(x: tx - rw, y: top + 32, width: rw, height: 1.5), Theme.text) }
-            tx -= rw + 14
+        drawText("Power", Theme.font(13, .semibold), Theme.text, ix, top + 15)
+        let track = NSRect(x: ix + iw - 196, y: top + 10, width: 196, height: 28)
+        segmented("range", ranges.enumerated().map { (id: "\($0.offset)", label: $0.element) }, selected: Prefs.range, in: track) { [weak self] i in
+            Prefs.range = i; self?.replayChart(); self?.needsDisplay = true
         }
 
-        // The answer: watts now.
-        let fy = top + 44
-        let big = Theme.font(34, .medium)
-        let ws = Fmt.watts(s?.wSystem)
-        drawText(ws, big, Theme.text, ix, fy)
-        drawText("W", Theme.font(15), Theme.muted, ix + textWidth(ws, big) + 4, fy + 17)
+        // The answer: watts now, counting to each new reading.
+        let fy = top + 48
+        let big = Theme.font(36, .semibold)
+        let ws = s?.wSystem.map { Fmt.watts(glide("watts", $0)) } ?? "—"
+        drawText(ws, big, Theme.text, ix, fy - 2)
+        drawText("W", Theme.font(15, .medium), Theme.muted, ix + textWidth(ws, big) + 4, fy + 18)
 
         let days = l.history?.days ?? []
         let today = days.last { $0.day == Self.dayString(Date()) }
         let todayText = today.map { Fmt.energy($0.wh) } ?? "—"
         let price = Prefs.price
         let cost = (price > 0 && today != nil) ? " · " + Fmt.money(today!.wh / 1000 * price) : ""
-        stat("Today", todayText + cost, right: ix + iw, y: fy + 2)
+        stat("Today", todayText + cost, right: ix + iw, y: fy + 4)
         let (pts, domain) = series(l)
         if Prefs.range == 3 {
             let total = days.reduce(0) { $0 + $1.wh }
-            stat("14 days", Fmt.energy(total) + (price > 0 ? " · " + Fmt.money(total / 1000 * price) : ""), right: ix + iw, y: fy + 22)
+            stat("14 days", Fmt.energy(total) + (price > 0 ? " · " + Fmt.money(total / 1000 * price) : ""), right: ix + iw, y: fy + 24)
         } else {
             let peak = pts.map(\.w).max()
-            stat("Peak · \(ranges[Prefs.range])", Fmt.wattsUnit(peak), right: ix + iw, y: fy + 22)
+            stat("Peak · \(ranges[Prefs.range])", Fmt.wattsUnit(peak), right: ix + iw, y: fy + 24)
         }
 
         let chart = NSRect(x: ix, y: fy + 58, width: iw, height: 112)
         chartRect = chart
         if Prefs.range == 3 { dayBars(days, in: chart) } else { line(pts, domain: domain, in: chart) }
 
-        // Where the watts go.
+        // Where the watts go: one bar split by part, each part gliding to its share.
         var by = chart.maxY + 30
         let parts: [(String, Double?, NSColor)] = [("CPU", s?.wCPU, Theme.accent), ("GPU", s?.wGPU, Theme.chart2),
-                                                   ("Memory", s?.wDRAM, Theme.chart3)]
+                                                   ("Memory", s?.wDRAM, Theme.series3)]
         let known = parts.compactMap(\.1).reduce(0, +) + (s?.wANE ?? 0)
         let total = s?.wSystem ?? 0
         let rest = max(0, total - known)
-        let bar = NSRect(x: ix, y: by, width: iw, height: 6)
-        fill(bar, Theme.raised, radius: 3)
+        let bar = NSRect(x: ix, y: by, width: iw, height: 8)
+        fill(bar, Theme.raised, radius: 4)
         if total > 0 {
             var bx = bar.minX
             NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(roundedRect: bar, xRadius: 3, yRadius: 3).addClip()
-            for (_, v, c) in parts { if let v, v > 0 { let pw = bar.width * min(1, v / total); fill(NSRect(x: bx, y: bar.minY, width: pw, height: 6), c); bx += pw + 1.5 } }
-            fill(NSRect(x: bx, y: bar.minY, width: max(0, bar.maxX - bx), height: 6), Theme.chart4)
+            NSBezierPath(roundedRect: bar, xRadius: 4, yRadius: 4).addClip()
+            for (name, v, c) in parts {
+                let share = glide("split.\(name)", min(1, max(0, (v ?? 0) / total)))
+                let pw = bar.width * CGFloat(share)
+                guard pw > 0.5 else { continue }
+                fill(NSRect(x: bx, y: bar.minY, width: pw, height: bar.height), c); bx += pw + 2
+            }
+            fill(NSRect(x: bx, y: bar.minY, width: max(0, bar.maxX - bx), height: bar.height), Theme.chart4)
             NSGraphicsContext.restoreGraphicsState()
         }
-        by += 16
+        by += 18
         let legend: [(String, Double?, NSColor)] = parts + [("Other", s?.wSystem == nil ? nil : rest, Theme.chart4)]
         for (i, (name, v, c)) in legend.enumerated() {
             let cx = ix + CGFloat(i % 2) * (iw / 2 + 6), cy = by + CGFloat(i / 2) * 20
-            fill(NSRect(x: cx, y: cy + 4, width: 8, height: 8), c, radius: 2)
+            fill(NSRect(x: cx, y: cy + 4, width: 8, height: 8), c, radius: 4)
             drawText(name, Theme.font(12), Theme.muted, cx + 14, cy)
             drawText(Fmt.wattsUnit(v), Theme.font(12, .medium), Theme.text, cx + iw / 2 - 12, cy, align: .right)
         }
@@ -290,7 +292,7 @@ final class Dashboard: Canvas {
         var v = 0.0
         while v <= topV + 0.001 {
             let yy = plot.maxY - CGFloat(v / topV) * plot.height
-            hline(plot.minX, yy, plot.width, v == 0 ? Theme.chart3 : Theme.grid)
+            hline(plot.minX, yy, plot.width, v == 0 ? Theme.line2 : Theme.grid, dash: v != 0)
             drawText(format(v) + unit, Theme.font(11), Theme.faint, r.maxX, yy - 7, align: .right)
             v += step
         }
@@ -324,28 +326,42 @@ final class Dashboard: Canvas {
             runs[runs.count - 1].append(NSPoint(x: px(p.t), y: py(p.w)))
             prevT = p.t
         }
+        // The line draws itself in from the left (the kit's "draw"), over a fill that fades to nothing.
+        let reveal = drawIn()
+        NSGraphicsContext.saveGraphicsState()
+        NSRect(x: plot.minX - 2, y: plot.minY - 4, width: (plot.width + 4) * reveal, height: plot.height + 8).clip()
+        let gradient = NSGradient(starting: Theme.accent.withAlphaComponent(0.28), ending: Theme.accent.withAlphaComponent(0))
         for run in runs where run.count > 1 {
             let area = NSBezierPath()
             area.move(to: NSPoint(x: run[0].x, y: plot.maxY))
             run.forEach { area.line(to: $0) }
             area.line(to: NSPoint(x: run.last!.x, y: plot.maxY)); area.close()
-            Theme.accent.withAlphaComponent(0.10).setFill(); area.fill()
+            gradient?.draw(in: area, angle: 90)
             let path = NSBezierPath(); path.move(to: run[0]); run.dropFirst().forEach { path.line(to: $0) }
-            path.lineWidth = 1.75; path.lineJoinStyle = .round
+            path.lineWidth = 2; path.lineJoinStyle = .round; path.lineCapStyle = .round
             Theme.accent.setStroke(); path.stroke()
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        // The newest reading, ringed, once the line has reached it.
+        if reveal >= 1, let last = runs.last?.last, mouse.map({ !plot.contains($0) }) ?? true {
+            fill(NSRect(x: last.x - 6, y: last.y - 6, width: 12, height: 12), Theme.accent.withAlphaComponent(0.22), radius: 6)
+            fill(NSRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6), Theme.accent, radius: 3)
         }
         // Read a value under the pointer.
         if let m = mouse, plot.contains(m) {
             let t = domain.lowerBound + Double((m.x - plot.minX) / plot.width) * span
             if let near = pts.min(by: { abs($0.t - t) < abs($1.t - t) }) {
                 let x = px(near.t)
-                vline(x, plot.minY, plot.height, Theme.chart3)
-                fill(NSRect(x: x - 3.5, y: py(near.w) - 3.5, width: 7, height: 7), Theme.text, radius: 3.5)
+                vline(x, plot.minY, plot.height, Theme.line3)
+                fill(NSRect(x: x - 5, y: py(near.w) - 5, width: 10, height: 10), Theme.ground, radius: 5)
+                fill(NSRect(x: x - 3.5, y: py(near.w) - 3.5, width: 7, height: 7), Theme.accent, radius: 3.5)
                 let label = "\(Fmt.clock(near.t, seconds: Prefs.range == 0)) · \(Fmt.watts(near.w)) W"
-                let f = Theme.font(12, .medium), lw = textWidth(label, f) + 12
+                let f = Theme.font(12, .medium), lw = textWidth(label, f) + 16
                 let lx = min(max(x - lw / 2, plot.minX), plot.maxX - lw)
-                fill(NSRect(x: lx, y: plot.minY - 4, width: lw, height: 20), Theme.raised, radius: 5)
-                drawText(label, f, Theme.text, lx + 6, plot.minY - 2)
+                let tip = NSRect(x: lx, y: plot.minY - 6, width: lw, height: 22)
+                fill(tip, Theme.raised, radius: 7)
+                stroke(tip, Theme.line2, radius: 7)
+                drawText(label, f, Theme.text, lx + 8, tip.minY + 3)
             }
         }
     }
@@ -367,17 +383,21 @@ final class Dashboard: Canvas {
         for (i, d) in shown.enumerated() {
             let slot = slots - shown.count + i
             let bx = plot.minX + CGFloat(slot) * (bw + 4)
-            let bh = max(1.5, CGFloat(d.wh / topV) * plot.height)
+            // Bars grow up from the axis, one after another, as the chart draws in.
+            let grow = min(1, max(0, drawIn() * 1.6 - CGFloat(i) / CGFloat(max(1, shown.count)) * 0.6))
+            let bh = max(1.5, CGFloat(d.wh / topV) * plot.height * grow)
             let rect = NSRect(x: bx, y: plot.maxY - bh, width: bw, height: bh)
             let hov = hit(NSRect(x: bx, y: plot.minY, width: bw + 4, height: plot.height), "day.\(d.day)") { _ in }
-            fill(rect, d.day == todayKey ? Theme.accent : (hov ? Theme.chart2 : Theme.chart3), radius: 2)
+            fill(rect, d.day == todayKey ? Theme.accent : (hov ? Theme.soft : Theme.raisedHi), radius: min(4, bw / 2))
             if hov || (d.day == todayKey && hover?.hasPrefix("day.") != true) {
                 let date = parse.date(from: d.day).map { show.string(from: $0) } ?? d.day
                 let label = "\(d.day == todayKey ? "Today so far" : date) · \(Fmt.energy(d.wh)) · peak \(Fmt.watts(d.peak)) W"
-                let f = Theme.font(12, .medium), lw = textWidth(label, f) + 12
+                let f = Theme.font(12, .medium), lw = textWidth(label, f) + 16
                 let lx = min(max(bx + bw / 2 - lw / 2, plot.minX), plot.maxX - lw)
-                fill(NSRect(x: lx, y: plot.minY - 4, width: lw, height: 20), Theme.raised, radius: 5)
-                drawText(label, f, Theme.text, lx + 6, plot.minY - 2)
+                let tip = NSRect(x: lx, y: plot.minY - 6, width: lw, height: 22)
+                fill(tip, Theme.raised, radius: 7)
+                stroke(tip, Theme.line2, radius: 7)
+                drawText(label, f, Theme.text, lx + 8, tip.minY + 3)
             }
         }
         if let first = shown.first, shown.count > 3, let fd = parse.date(from: first.day) {
@@ -399,22 +419,16 @@ final class Dashboard: Canvas {
         let canControl = s?.root ?? false
         let outdated = false     // an older fan helper still works; Settings offers the update
         let h: CGFloat = 70 + CGFloat(max(1, fans.count)) * 62 + 34
-        fill(NSRect(x: x, y: top, width: w, height: h), Theme.surface, radius: 14)
-        drawText(fans.count > 1 ? "Fans" : "Fan", Theme.font(13, .semibold), Theme.text, ix, top + 14)
+        card(NSRect(x: x, y: top, width: w, height: h))
+        drawText(fans.count > 1 ? "Fans" : "Fan", Theme.font(13, .semibold), Theme.text, ix, top + 15)
 
-        // Mode control: Auto, Fixed, Curve. The chosen one is inverted white, the style's primary.
+        // Mode control: Auto, Fixed, Curve. The chosen one is the kit's primary, and slides there.
         let policy = currentPolicy(l, s)
         let mode = policy.first ?? "auto"
-        let modes = [("auto", "Auto"), ("fixed", "Fixed"), ("curve", "Curve")]
-        let f = Theme.font(12, .medium)
-        let segW: CGFloat = 58, track = NSRect(x: ix + iw - segW * 3 - 4, y: top + 9, width: segW * 3 + 4, height: 28)
-        fill(track, Theme.raised, radius: 14)
-        for (i, (id, name)) in modes.enumerated() {
-            let r = NSRect(x: track.minX + 2 + CGFloat(i) * segW, y: track.minY + 2, width: segW, height: 24)
-            let on = id == mode
-            let hov = canControl && hit(r, "fan.\(id)") { [weak self] _ in self?.choose(id, l, s) }
-            if on { fill(r, canControl ? Theme.text : Theme.chart3, radius: 12) }
-            drawText(name, f, on ? Theme.ground : (canControl ? (hov ? Theme.text : Theme.muted) : Theme.chart3), r.midX, r.minY + 4, align: .center)
+        let modes = [(id: "auto", label: "Auto"), (id: "fixed", label: "Fixed"), (id: "curve", label: "Curve")]
+        let track = NSRect(x: ix + iw - 182, y: top + 10, width: 182, height: 28)
+        segmented("fan", modes, selected: modes.firstIndex { $0.id == mode } ?? 0, in: track, enabled: canControl, primary: true) { [weak self] i in
+            self?.choose(modes[i].id, l, s)
         }
 
         var fy = top + 54
@@ -423,19 +437,17 @@ final class Dashboard: Canvas {
             fy += 62
         }
         for (n, fan) in fans.enumerated() {
-            let rpmF = Theme.font(20, .medium)
-            let rs = Fmt.rpm(fan.rpm)
-            drawText(rs, rpmF, Theme.text, ix, fy)
+            let rpmF = Theme.font(22, .semibold)
+            let rs = Fmt.rpm(glide("fan.rpm\(n)", fan.rpm))
+            drawText(rs, rpmF, Theme.text, ix, fy - 2)
             drawText(fans.count > 1 ? "rpm · \(n == 0 ? "left" : "right")" : "rpm", Theme.font(12), Theme.muted, ix + textWidth(rs, rpmF) + 5, fy + 7)
             let tgt = fan.manual ? "target \(Fmt.rpm(fan.target))" : "\(Int(((fan.rpm - fan.min) / max(1, fan.max - fan.min) * 100).rounded()))% of range"
             drawText(tgt, Theme.font(12), Theme.faint, ix + iw, fy + 7, align: .right)
 
-            let tr = NSRect(x: ix, y: fy + 32, width: iw, height: 6)
-            fill(tr, Theme.raised, radius: 3)
-            let frac = CGFloat(min(1, max(0, (fan.rpm - fan.min) / max(1, fan.max - fan.min))))
-            fill(NSRect(x: tr.minX, y: tr.minY, width: max(6, tr.width * frac), height: 6), Theme.chart2, radius: 3)
-            drawText(Fmt.rpm(fan.min), Theme.font(11), Theme.faint, ix, fy + 42)
-            drawText(Fmt.rpm(fan.max), Theme.font(11), Theme.faint, ix + iw, fy + 42, align: .right)
+            let tr = NSRect(x: ix, y: fy + 31, width: iw, height: 8)
+            meter("fan.bar\(n)", tr, (fan.rpm - fan.min) / max(1, fan.max - fan.min), Theme.soft)
+            drawText(Fmt.rpm(fan.min), Theme.font(11), Theme.faint, ix, fy + 43)
+            drawText(Fmt.rpm(fan.max), Theme.font(11), Theme.faint, ix + iw, fy + 43, align: .right)
 
             if mode == "fixed", canControl {
                 let target = dragRPM ?? Double(policy.dropFirst().first ?? "") ?? fan.target
@@ -447,8 +459,9 @@ final class Dashboard: Canvas {
                     l.setFan("fixed \(Int(rpm))")
                     self?.needsDisplay = true
                 }
-                fill(NSRect(x: kx - 7, y: tr.midY - 7, width: 14, height: 14), Theme.text, radius: 7)
-                fill(NSRect(x: kx - 2.5, y: tr.midY - 2.5, width: 5, height: 5), Theme.ground, radius: 2.5)
+                let gx = CGFloat(glide("fan.knob\(n)", Double(kx), dur: 0.2))
+                fill(NSRect(x: gx - 9, y: tr.midY - 9, width: 18, height: 18), NSColor(white: 0, alpha: 0.35), radius: 9)
+                fill(NSRect(x: gx - 8, y: tr.midY - 8, width: 16, height: 16), Theme.text, radius: 8)
             }
             fy += 62
         }
@@ -458,10 +471,7 @@ final class Dashboard: Canvas {
         if !canControl || outdated {
             let note = outdated ? "The fan helper here is out of date." : "Needs a one-time setup first."
             drawText(note, Theme.font(12), Theme.muted, ix, ny + 6, maxWidth: iw - 86)
-            let br = NSRect(x: ix + iw - 76, y: ny, width: 76, height: 26)
-            let hov = hit(br) { [weak self] _ in self?.onSetup?(l) }
-            stroke(br, hov ? Theme.text : Theme.chart3, radius: 13)
-            drawText(outdated ? "Update" : "Set up", Theme.font(12, .medium), Theme.text, br.midX, br.minY + 5, align: .center)
+            button("fan.setup", outdated ? "Update" : "Set up", at: NSRect(x: ix + iw - 76, y: ny, width: 76, height: 28)) { [weak self] in self?.onSetup?(l) }
         } else {
             let note: String
             switch mode {
@@ -495,13 +505,13 @@ final class Dashboard: Canvas {
 
     private func pressureGrid(_ s: Snapshot?, x: CGFloat, y: inout CGFloat) {
         let w = colW, cellW = w / 2, cellH: CGFloat = 110, top = y
-        fill(NSRect(x: x, y: top, width: w, height: cellH * 3), Theme.surface, radius: 14)
-        vline(x + cellW, top + 12, cellH * 3 - 24, Theme.line)
-        hline(x + 12, top + cellH, w - 24, Theme.line)
-        hline(x + 12, top + cellH * 2, w - 24, Theme.line)
+        card(NSRect(x: x, y: top, width: w, height: cellH * 3))
+        vline(x + cellW, top + 14, cellH * 3 - 28, Theme.line)
+        hline(x + 14, top + cellH, w - 28, Theme.line)
+        hline(x + 14, top + cellH * 2, w - 28, Theme.line)
 
-        // CPU: one bar per core, the chip drawn as itself.
-        cell(x, top, "CPU", Fmt.pct(s?.cpu), sub: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
+        // CPU: one bar per core, the chip drawn as itself; each bar glides to its core's load.
+        cell(x, top, "CPU", s?.cpu.map { Fmt.pct(glide("cpu", $0)) } ?? "—", sub: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
         if let s, !s.cores.isEmpty {
             let n = CGFloat(s.cores.count), bx = x + 14, bw0 = cellW - 28
             let clusterGap: CGFloat = s.eCores > 0 ? 4 : 0
@@ -509,9 +519,10 @@ final class Dashboard: Canvas {
             let by = top + 64, bh: CGFloat = 28
             for (i, c) in s.cores.enumerated() {
                 let cx = bx + CGFloat(i) * (bw + 2) + (i >= s.eCores && s.eCores > 0 ? clusterGap : 0)
-                fill(NSRect(x: cx, y: by, width: bw, height: bh), Theme.raised, radius: 1.5)
-                let fh = max(1.5, bh * CGFloat(min(100, c) / 100))
-                fill(NSRect(x: cx, y: by + bh - fh, width: bw, height: fh), Theme.accent, radius: 1.5)
+                fill(NSRect(x: cx, y: by, width: bw, height: bh), Theme.raised, radius: min(2, bw / 2))
+                let load = glide("core.\(i)", min(100, max(0, c)) / 100)
+                let fh = max(2, bh * CGFloat(load))
+                fill(NSRect(x: cx, y: by + bh - fh, width: bw, height: fh), Theme.accent.withAlphaComponent(0.45 + 0.55 * CGFloat(load)), radius: min(2, bw / 2))
             }
             let legend = s.eCores > 0 ? "\(s.eCores) E-cores · \(s.cores.count - s.eCores) P-cores" : "\(s.cores.count) cores"
             drawText(legend, Theme.font(11), Theme.faint, bx, by + bh + 4)
@@ -520,20 +531,20 @@ final class Dashboard: Canvas {
         // Memory.
         let mx = x + cellW
         if let s {
-            cell(mx, top, "Memory", Fmt.gb(s.memUsed), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB")
+            cell(mx, top, "Memory", Fmt.gb(glide("mem", s.memUsed)), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB")
             let p = s.pressure >= 4 ? ("Critical", Theme.pillBad) : s.pressure >= 2 ? ("Warning", Theme.pillWarn) : ("Normal", Theme.pillGood)
             pill(p.0, p.1, right: mx + cellW - 14, top + 13)
-            let bar = NSRect(x: mx + 14, y: top + 68, width: cellW - 28, height: 6)
-            fill(bar, Theme.raised, radius: 3)
+            let bar = NSRect(x: mx + 14, y: top + 67, width: cellW - 28, height: 8)
+            fill(bar, Theme.raised, radius: 4)
             var bx = bar.minX
             NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(roundedRect: bar, xRadius: 3, yRadius: 3).addClip()
-            for (v, c) in [(s.memApp + s.memWired, Theme.chart2), (s.memCompressed, Theme.chart3)] {
-                let pw = bar.width * CGFloat(max(0, v) / max(1, s.memTotal))
-                fill(NSRect(x: bx, y: bar.minY, width: pw, height: 6), c); bx += pw + 1
+            NSBezierPath(roundedRect: bar, xRadius: 4, yRadius: 4).addClip()
+            for (key, v, c) in [("mem.app", s.memApp + s.memWired, Theme.series3), ("mem.zip", s.memCompressed, Theme.chart3)] {
+                let pw = bar.width * CGFloat(glide(key, max(0, v) / max(1, s.memTotal)))
+                fill(NSRect(x: bx, y: bar.minY, width: pw, height: bar.height), c); bx += pw + 1.5
             }
             NSGraphicsContext.restoreGraphicsState()
-            fill(NSRect(x: mx + 14, y: top + 83, width: 7, height: 7), Theme.chart3, radius: 2)
+            fill(NSRect(x: mx + 14, y: top + 83, width: 7, height: 7), Theme.chart3, radius: 3.5)
             drawText("\(Fmt.gb(s.memCompressed)) GB compressed", Theme.font(11), Theme.faint, mx + 26, top + 79, maxWidth: cellW - 40)
             let swap = s.swapTotal > 0 ? "Swap \(Fmt.gb(s.swapUsed)) of \(Fmt.gb(s.swapTotal)) GB" : "No swap in use"
             drawText(swap, Theme.font(11), s.swapUsed > 1_073_741_824 ? Theme.warning : Theme.faint, mx + 14, top + 93)
@@ -541,19 +552,17 @@ final class Dashboard: Canvas {
 
         // Temperature.
         let ty = top + cellH
-        cell(x, ty, "Thermal", Fmt.temp(s?.tCPU), unit: s?.tCPU == nil ? nil : "CPU", sub: nil)
+        cell(x, ty, "Thermal", s?.tCPU.map { Fmt.temp(glide("temp", $0)) } ?? "—", unit: s?.tCPU == nil ? nil : "CPU", sub: nil)
         if let s {
-            let states = [("Nominal", Theme.pillNeutral), ("Fair", Theme.pillWarn), ("Serious", Theme.pillBad), ("Critical", Theme.pillBad)]
+            let states = [("Nominal", Theme.pillGood), ("Fair", Theme.pillWarn), ("Serious", Theme.pillBad), ("Critical", Theme.pillBad)]
             let st = states[min(3, max(0, s.thermal))]
             pill(st.0, st.1, right: x + cellW - 14, ty + 13)
-            // A scale from 30° to 105°, with the average and the hottest sensor on it.
-            let bar = NSRect(x: x + 14, y: ty + 68, width: cellW - 28, height: 6)
-            fill(bar, Theme.raised, radius: 3)
-            func pos(_ t: Double) -> CGFloat { bar.minX + bar.width * CGFloat(min(1, max(0, (t - 30) / 75))) }
+            // A scale from 30° to 105° with the hottest sensor on it: neutral until it gets warm.
+            let bar = NSRect(x: x + 14, y: ty + 67, width: cellW - 28, height: 8)
             if let hot = s.tCPU {
-                let hc = hot >= 90 ? Theme.negative : hot >= 80 ? Theme.warning : Theme.chart2
-                fill(NSRect(x: bar.minX, y: bar.minY, width: max(6, pos(hot) - bar.minX), height: 6), hc, radius: 3)
-            }
+                let hc = hot >= 90 ? Theme.negative : hot >= 80 ? Theme.warning : Theme.soft
+                meter("temp.bar", bar, (hot - 30) / 75, hc)
+            } else { fill(bar, Theme.raised, radius: 4) }
             var parts: [String] = []
             if let g = s.tGPU { parts.append("GPU \(Fmt.temp(g))") }
             if let d = s.tSSD { parts.append("SSD \(Fmt.temp(d))") }
@@ -564,11 +573,9 @@ final class Dashboard: Canvas {
         }
 
         // GPU.
-        cell(mx, ty, "GPU", Fmt.pct(s?.gpu), sub: nil)
+        cell(mx, ty, "GPU", s?.gpu.map { Fmt.pct(glide("gpu", $0)) } ?? "—", sub: nil)
         if let s {
-            let bar = NSRect(x: mx + 14, y: ty + 68, width: cellW - 28, height: 6)
-            fill(bar, Theme.raised, radius: 3)
-            fill(NSRect(x: bar.minX, y: bar.minY, width: max(6, bar.width * CGFloat(min(100, s.gpu ?? 0) / 100)), height: 6), Theme.chart2, radius: 3)
+            meter("gpu.bar", NSRect(x: mx + 14, y: ty + 67, width: cellW - 28, height: 8), (s.gpu ?? 0) / 100, Theme.chart2)
             drawText("drawing \(Fmt.wattsUnit(s.wGPU))", Theme.font(11), Theme.faint, mx + 14, ty + 79)
             drawText("Neural Engine \(Fmt.wattsUnit(s.wANE))", Theme.font(11), Theme.faint, mx + 14, ty + 93)
         }
@@ -580,10 +587,8 @@ final class Dashboard: Canvas {
             let freeShare = boot.free / max(1, boot.total)
             if freeShare < 0.05 || boot.free < 8e9 { pill("Almost full", Theme.pillBad, right: x + cellW - 14, sy + 13) }
             else if freeShare < 0.12 { pill("Low", Theme.pillWarn, right: x + cellW - 14, sy + 13) }
-            let bar = NSRect(x: x + 14, y: sy + 68, width: cellW - 28, height: 6)
-            fill(bar, Theme.raised, radius: 3)
-            let usedColor = freeShare < 0.05 ? Theme.negative : freeShare < 0.12 ? Theme.warning : Theme.chart2
-            fill(NSRect(x: bar.minX, y: bar.minY, width: max(6, bar.width * CGFloat(1 - freeShare)), height: 6), usedColor, radius: 3)
+            let usedColor = freeShare < 0.05 ? Theme.negative : freeShare < 0.12 ? Theme.warning : Theme.soft
+            meter("disk.bar", NSRect(x: x + 14, y: sy + 67, width: cellW - 28, height: 8), 1 - freeShare, usedColor)
             drawText("\(Fmt.size(boot.total - boot.free)) of \(Fmt.size(boot.total)) used", Theme.font(11), Theme.faint, x + 14, sy + 79, maxWidth: cellW - 28)
             let others = s.volumes.filter { $0 != boot }
             let more = others.first.map { "\($0.name) · \(Fmt.size($0.free)) free" + (others.count > 1 ? " +\(others.count - 1)" : "") } ?? boot.name
@@ -591,7 +596,7 @@ final class Dashboard: Canvas {
         } else { cell(x, sy, "Storage", "—") }
 
         // Network and disk throughput.
-        drawText("Network and disk", Theme.font(12), Theme.faint, mx + 14, sy + 14)
+        drawText("Network and disk", Theme.font(12, .medium), Theme.muted, mx + 14, sy + 14)
         let rows: [(String, Double?)] = [("in", s?.netIn), ("out", s?.netOut), ("read", s?.diskRead), ("write", s?.diskWrite)]
         for (j, (name, v)) in rows.enumerated() {
             let ry = sy + 34 + CGFloat(j) * 17
@@ -602,8 +607,8 @@ final class Dashboard: Canvas {
     }
 
     private func cell(_ x: CGFloat, _ y: CGFloat, _ label: String, _ value: String, unit: String? = nil, sub: String? = nil) {
-        drawText(label, Theme.font(12), Theme.faint, x + 14, y + 14)
-        let vf = Theme.font(24, .medium)
+        drawText(label, Theme.font(12, .medium), Theme.muted, x + 14, y + 14)
+        let vf = Theme.font(24, .semibold)
         drawText(value, vf, Theme.text, x + 14, y + 32)
         if let unit { drawText(unit, Theme.font(13), Theme.muted, x + 14 + textWidth(value, vf) + 4, y + 42) }
         if let sub { drawText(sub, Theme.font(11), Theme.faint, x + colW / 2 - 14, y + 15, align: .right) }
@@ -615,8 +620,8 @@ final class Dashboard: Canvas {
 
     private func procCard(_ s: Snapshot?, x: CGFloat, y: inout CGFloat, bottom: CGFloat) {
         let w = colW, top = y, h = max(120, bottom - top), ix = x + 14, iw = w - 28
-        fill(NSRect(x: x, y: top, width: w, height: h), Theme.surface, radius: 14)
-        drawText("Using the CPU now", Theme.font(13, .semibold), Theme.text, ix, top + 14)
+        card(NSRect(x: x, y: top, width: w, height: h))
+        drawText("Using the CPU now", Theme.font(13, .semibold), Theme.text, ix, top + 15)
         let memX = ix + iw, cpuX = memX - 74
         drawText("CPU", Theme.font(11), Theme.faint, cpuX, top + 16, align: .right)
         drawText("Memory", Theme.font(11), Theme.faint, memX, top + 16, align: .right)
@@ -632,9 +637,12 @@ final class Dashboard: Canvas {
             drawText(p.name, Theme.font(13), Theme.text, ix, ry, maxWidth: cpuX - ix - 48)
             drawText(String(format: "%.1f%%", p.cpu), Theme.font(13, .medium), Theme.text, cpuX, ry, align: .right)
             drawText("\(Fmt.gb(p.mem)) GB", Theme.font(13), Theme.muted, memX, ry, align: .right)
-            // A 2px share bar under the name, the top process in ink.
-            let bw = (cpuX - ix - 48) * CGFloat(min(1, p.cpu / maxCPU))
-            fill(NSRect(x: ix, y: ry + 20, width: max(2, bw), height: 2), i == 0 ? Theme.chart2 : Theme.chart3, radius: 1)
+            // A share bar under the name, gliding; the top process in the CPU's colour. Keyed by
+            // name so a process keeps its bar when the order changes.
+            let share = glide("proc.\(p.name)", min(1, p.cpu / maxCPU))
+            let track = NSRect(x: ix, y: ry + 20, width: cpuX - ix - 48, height: 3)
+            fill(track, Theme.raised, radius: 1.5)
+            fill(NSRect(x: ix, y: track.minY, width: max(3, track.width * CGFloat(share)), height: 3), i == 0 ? Theme.accent : Theme.line3, radius: 1.5)
         }
         y = top + h
     }
@@ -653,9 +661,11 @@ final class Dashboard: Canvas {
                                                           ("logs", "Log files", onOpenLogs)] + (screen.map { [("screen", "Screen", $0)] } ?? [])
         for (id, name, action) in buttons {
             let f = Theme.font(12, .medium), w = textWidth(name, f)
-            let hov = hit(NSRect(x: x - w - 8, y: y + 2, width: w + 16, height: 30), "foot.\(id)") { _ in action?() }
-            drawText(name, f, id == "screen" ? (hov ? Theme.text : Theme.accent) : hov ? Theme.text : Theme.muted, x, y + 10, align: .right)
-            x -= w + 20
+            let r = NSRect(x: x - w - 10, y: y + 4, width: w + 20, height: 26)
+            let hov = hit(r, "foot.\(id)") { _ in action?() }
+            if hov { fill(r, Theme.raised, radius: 13); stroke(r, Theme.line2, radius: 13) }
+            drawText(name, f, hov || id == "screen" ? Theme.text : Theme.muted, x, y + 10, align: .right)
+            x -= w + 22
         }
     }
 }
