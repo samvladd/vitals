@@ -200,7 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatus() {
         let shown = shownInBar
-        let key = StatusRenderer.readings(for: shown).map { "\($0.top)|\($0.bottom)" }.joined(separator: ",")
+        let key = StatusRenderer.readings(for: shown).map { "\($0.icon)|\($0.top)|\($0.bottom)" }.joined(separator: ",")
             + shown.map { "\($0.key)=\($0.state == .live)" }.joined()
         guard key != lastStatusKey else { return }      // redraw the menu bar only when the text changes
         lastStatusKey = key

@@ -76,8 +76,10 @@ enum Fmt {
 enum Prefs {
     private static let d = UserDefaults.standard
     /// The other Macs, as SSH hosts, in tab order. Each is keyed "ssh:<host>"; this Mac is "local".
+    /// None until you add some in Settings (or a two-Mac install had one): a fresh install shows
+    /// just the Mac it runs on.
     static var remoteHosts: [String] {
-        get { d.stringArray(forKey: "remoteHosts") ?? [d.string(forKey: "remoteHost") ?? "mac-mini"] }
+        get { d.stringArray(forKey: "remoteHosts") ?? d.string(forKey: "remoteHost").map { [$0] } ?? [] }
         set { d.set(newValue, forKey: "remoteHosts") }
     }
     static func key(_ host: String) -> String { "ssh:\(host)" }
@@ -98,7 +100,8 @@ enum Prefs {
         guard d.object(forKey: "remoteHosts") == nil else { return }
         let hosts = remoteHosts
         remoteHosts = hosts
-        let first = key(hosts[0])
+        guard let firstHost = hosts.first else { return }
+        let first = key(firstHost)
         if d.string(forKey: "selected") == "remote" { selected = first }
         switch d.string(forKey: "menuBar") {
         case "both": menuBar = "all"
