@@ -193,8 +193,8 @@ final class Dashboard: Canvas {
         // The answer: watts now, counting to each new reading.
         let fy = top + 48
         let big = Theme.mono(34, .medium)
-        let ws = s?.wSystem.map { Fmt.watts(count("watts", $0)) } ?? "—"
-        let bw = drawNumber(ws, big, Theme.text, ix, fy)
+        let ws = Fmt.watts(s?.wSystem)
+        let bw = odometer("watts", ws, big, Theme.text, ix, fy)
         drawText("W", Theme.font(15, .medium), Theme.muted, ix + bw + 5, fy + 17)
 
         let days = l.history?.days ?? []
@@ -438,8 +438,8 @@ final class Dashboard: Canvas {
         }
         for (n, fan) in fans.enumerated() {
             let rpmF = Theme.mono(22, .medium)
-            let rs = Fmt.rpm(count("fan.rpm\(n)", fan.rpm))
-            let rw = drawNumber(rs, rpmF, Theme.text, ix, fy - 1)
+            let rs = Fmt.rpm(fan.rpm)
+            let rw = odometer("fan.rpm\(n)", rs, rpmF, Theme.text, ix, fy - 1)
             drawText(fans.count > 1 ? "rpm · \(n == 0 ? "left" : "right")" : "rpm", Theme.font(12), Theme.muted, ix + rw + 5, fy + 7)
             let tgt = fan.manual ? "target \(Fmt.rpm(fan.target))" : "\(Int(((fan.rpm - fan.min) / max(1, fan.max - fan.min) * 100).rounded()))% of range"
             drawText(tgt, Theme.font(12), Theme.faint, ix + iw, fy + 7, align: .right)
@@ -512,7 +512,7 @@ final class Dashboard: Canvas {
 
         // CPU: one bar per core, the chip drawn as itself; each bar glides to its core's load.
         var r = tileRect(0)
-        tile(r, "CPU", swatch: Theme.accent, value: s?.cpu.map { Fmt.pct(count("cpu", $0)) } ?? "—",
+        tile(r, "CPU", swatch: Theme.accent, value: s?.cpu.map { Fmt.pct($0) } ?? "—",
              note: s.map { "load " + String(format: "%.1f", $0.load.first ?? 0) })
         if let s, !s.cores.isEmpty {
             let n = CGFloat(s.cores.count), bx = r.minX + 14
@@ -534,7 +534,7 @@ final class Dashboard: Canvas {
         r = tileRect(1)
         if let s {
             let p = s.pressure >= 4 ? ("Critical", Theme.pillBad) : s.pressure >= 2 ? ("Warning", Theme.pillWarn) : ("Normal", Theme.pillGood)
-            tile(r, "Memory", swatch: Theme.series3, value: Fmt.gb(count("mem", s.memUsed)), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB", pill: p)
+            tile(r, "Memory", swatch: Theme.series3, value: Fmt.gb(s.memUsed), unit: "/ \(Fmt.gb(s.memTotal, 0)) GB", pill: p)
             spark(l.trend["mem"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: Theme.series3, minSpan: 4)
             let swap = s.swapUsed > 0 ? "\(Fmt.gb(s.swapUsed)) GB in swap" : "\(Fmt.gb(s.memCompressed)) GB compressed"
             drawText(swap, Theme.font(11), s.swapUsed > 1_073_741_824 ? Theme.warning : Theme.faint,
@@ -547,7 +547,7 @@ final class Dashboard: Canvas {
             let states = [("Nominal", Theme.pillGood), ("Fair", Theme.pillWarn), ("Serious", Theme.pillBad), ("Critical", Theme.pillBad)]
             let hot = s.tCPU ?? 0
             let tone = hot >= 90 ? Theme.negative : hot >= 80 ? Theme.warning : Theme.soft
-            tile(r, "Thermal", swatch: tone, value: s.tCPU.map { Fmt.temp(count("temp", $0)) } ?? "—", unit: s.tCPU == nil ? nil : "CPU",
+            tile(r, "Thermal", swatch: tone, value: s.tCPU.map { Fmt.temp($0) } ?? "—", unit: s.tCPU == nil ? nil : "CPU",
                  pill: states[min(3, max(0, s.thermal))])
             spark(l.trend["temp"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: tone, minSpan: 6)
             var parts: [String] = []
@@ -559,7 +559,7 @@ final class Dashboard: Canvas {
 
         // GPU: busy share, what it draws, and the last two minutes.
         r = tileRect(3)
-        tile(r, "GPU", swatch: Theme.chart2, value: s?.gpu.map { Fmt.pct(count("gpu", $0)) } ?? "—")
+        tile(r, "GPU", swatch: Theme.chart2, value: s?.gpu.map { Fmt.pct($0) } ?? "—")
         if let s {
             spark(l.trend["gpu"], in: NSRect(x: r.minX + 14, y: r.minY + 64, width: inner, height: 24), color: Theme.chart2, minSpan: 10)
             drawText("drawing \(Fmt.wattsUnit(s.wGPU))", Theme.font(11), Theme.faint, r.minX + 14, r.minY + 92, maxWidth: inner)
@@ -599,7 +599,7 @@ final class Dashboard: Canvas {
         if let p { pill(p.0, p.1, right: r.maxX - 12, r.minY + 12) }
         else if let note { drawText(note, Theme.font(11), Theme.faint, r.maxX - 14, r.minY + 14, align: .right) }
         let vf = Theme.mono(22, .medium)
-        let vw = drawNumber(value, vf, Theme.text, r.minX + 14, r.minY + 33)
+        let vw = odometer("tile.\(label)", value, vf, Theme.text, r.minX + 14, r.minY + 33)
         if let unit { drawText(unit, Theme.font(12), Theme.muted, r.minX + 14 + vw + 4, r.minY + 42, maxWidth: r.width - 32 - vw) }
     }
 

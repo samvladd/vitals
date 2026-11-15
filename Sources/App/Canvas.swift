@@ -26,9 +26,11 @@ class Canvas: NSView {
         moving = false
         if scrollY != 0 { NSGraphicsContext.current?.cgContext.translateBy(x: 0, y: -scrollY) }
         touched.removeAll(keepingCapacity: true)
+        odoTouched.removeAll(keepingCapacity: true)
         render()
         // Forget values that were not drawn this time (a process that quit, a Mac switched away from).
         if tweens.count > touched.count { tweens = tweens.filter { touched.contains($0.key) } }
+        if odos.count > odoTouched.count { odos = odos.filter { odoTouched.contains($0.key) } }
         revealing = false
         moving ? startFrames() : stopFrames()
         Canvas.draws += 1; Canvas.drawTime += CFAbsoluteTimeGetCurrent() - t0
@@ -58,6 +60,7 @@ class Canvas: NSView {
     /// Replays the arrival: cards rise in, numbers count up from zero, charts draw.
     func reveal() {
         tweens.removeAll()
+        odos.removeAll()
         guard !Self.reduceMotion() else { return }
         revealing = true
         revealAt = CACurrentMediaTime()
@@ -86,20 +89,84 @@ class Canvas: NSView {
         return from
     }
 
-    /// A number that counts up from zero when the panel opens, then simply shows each new reading.
-    /// Rolling the digits to every once-a-second reading reads as ticking, not as smoothness.
-    func count(_ key: String, _ target: Double) -> Double {
-        if Self.reduceMotion() { return target }
-        touched.insert(key)
-        if var t = tweens[key] {
-            guard now < t.start + t.dur else { t.to = target; t.from = target; tweens[key] = t; return target }
-            t.to = target; tweens[key] = t      // still counting up: carry on, to the newest reading
-            moving = true
-            return value(t)
+    // MARK: odometer (the kit's K2.odometer)
+    //
+    // A figure changes once a second, all together, like the plain panel; only the digits that changed
+    // roll, each on its own strip of 0–9: up when the value rose, down when it fell, the last digit
+    // first and each one to its left 45 ms later, over 800 ms on the kit's curve, faded at the strip's
+    // top and bottom edges. When the panel opens the figures roll up from zeros (1.1 s, 55 ms apart).
+
+    private struct Odo { var from: String; var to: String; var start: CFTimeInterval; var up: Bool; var dur: Double; var stagger: Double }
+    private var odos: [String: Odo] = [:]
+    private var odoTouched: Set<String> = []
+
+    /// Draws `text` as an odometer under `key`; returns its width.
+    @discardableResult
+    func odometer(_ key: String, _ text: String, _ font: NSFont, _ color: NSColor, _ x: CGFloat, _ y: CGFloat) -> CGFloat {
+        odoTouched.insert(key)
+        if Self.reduceMotion() { return drawNumber(text, font, color, x, y) }
+        var o: Odo
+        if let old = odos[key] {
+            o = old
+            if old.to != text {
+                func num(_ s: String) -> Double { Double(s.filter { $0.isNumber || $0 == "." || $0 == "-" }) ?? 0 }
+                o = Odo(from: old.to, to: text, start: now, up: num(text) >= num(old.to), dur: 0.8, stagger: 0.045)
+            }
+        } else if revealing {
+            o = Odo(from: String(text.map { $0.isNumber ? "0" : $0 }), to: text, start: now, up: true, dur: 1.1, stagger: 0.055)
+        } else {
+            o = Odo(from: text, to: text, start: now, up: true, dur: 0.8, stagger: 0.045)
         }
-        tweens[key] = Tween(from: revealing ? 0 : target, to: target, start: now, dur: 0.9, bounce: false)
-        if revealing { moving = true; return 0 }
-        return target
+        odos[key] = o
+
+        let kern = -0.02 * font.pointSize
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .kern: kern]
+        let lh = ceil(font.ascender - font.descender + font.leading)
+        let to = Array(o.to), from = Array(o.from), pad = from.count - to.count
+        // Lay out left to right, then roll right to left: the rightmost digit has no delay.
+        var xs: [CGFloat] = [], cx = x
+        for c in to { xs.append(cx); cx += (String(c) as NSString).size(withAttributes: attrs).width }
+        var order = 0
+        for i in stride(from: to.count - 1, through: 0, by: -1) {
+            let c = to[i]
+            guard let cd = c.wholeNumberValue else { (String(c) as NSString).draw(at: NSPoint(x: xs[i], y: y), withAttributes: attrs); continue }
+            let pc: Character? = i + pad >= 0 && i + pad < from.count ? from[i + pad] : nil
+            let pd = pc?.wholeNumberValue ?? (o.up ? 0 : 9)
+            var s = 10 + pd
+            let e = pc == c ? 10 + cd : o.up ? (cd >= pd ? 10 + cd : 20 + cd) : (cd <= pd ? 10 + cd : cd)
+            if pc == c { s = e }
+            let p = min(1, max(0, (now - o.start - Double(order) * o.stagger) / o.dur))
+            order += 1
+            if s == e || p >= 1 { (String(c) as NSString).draw(at: NSPoint(x: xs[i], y: y), withAttributes: attrs); continue }
+            moving = true
+            let off = Double(s) + Double(e - s) * Self.odoEase(p)
+            let w = (i + 1 < xs.count ? xs[i + 1] : cx) - xs[i]
+            NSGraphicsContext.saveGraphicsState()
+            NSRect(x: xs[i], y: y, width: w + 1, height: lh).clip()
+            for k in [Int(off.rounded(.down)), Int(off.rounded(.down)) + 1] {
+                let f = CGFloat(Double(k) - off)          // -1…1: where this digit sits in the window
+                let a = max(0, 1 - abs(f) * 1.15)         // the kit's mask: faded toward the edges
+                guard a > 0.01 else { continue }
+                var da = attrs; da[.foregroundColor] = color.withAlphaComponent(color.alphaComponent * a)
+                ("\(((k % 10) + 10) % 10)" as NSString).draw(at: NSPoint(x: xs[i], y: y + f * lh), withAttributes: da)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        return cx - x
+    }
+
+    /// The kit's odometer curve, cubic-bezier(.3, .75, .1, 1).
+    private static func odoEase(_ p: Double) -> Double {
+        let (x1, y1, x2, y2) = (0.3, 0.75, 0.1, 1.0)
+        func bez(_ t: Double, _ a: Double, _ b: Double) -> Double { 3 * (1 - t) * (1 - t) * t * a + 3 * (1 - t) * t * t * b + t * t * t }
+        var t = p
+        for _ in 0..<8 {
+            let x = bez(t, x1, x2) - p
+            let dx = 3 * (1 - t) * (1 - t) * x1 + 6 * (1 - t) * t * (x2 - x1) + 3 * t * t * (1 - x2)
+            if abs(x) < 1e-5 || dx == 0 { break }
+            t = min(1, max(0, t - x / dx))
+        }
+        return bez(t, y1, y2)
     }
 
     private func value(_ t: Tween) -> Double {
