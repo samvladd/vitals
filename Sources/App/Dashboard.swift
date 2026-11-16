@@ -127,8 +127,11 @@ final class Dashboard: Canvas {
             px += w + 8
         }
         if let i = l.info {
-            let spec = "\(i.chip.replacingOccurrences(of: "Apple ", with: "")) · \(i.cores) cores · \(Fmt.gb(i.memory, 0)) GB · \(i.os)"
-            drawText(spec, Theme.font(12), Theme.faint, Self.width - pad, y + 7, align: .right)
+            // The chip and its memory, as two quiet tags: what this Mac is, at a glance.
+            let chip = i.chip.replacingOccurrences(of: "Apple ", with: "")
+            let rx = Self.width - pad
+            let mw = pill("\(Fmt.gb(i.memory, 0)) GB", Theme.pillNeutral, right: rx, y + 6)
+            _ = pill(chip, Theme.pillNeutral, right: rx - mw - 6, y + 6)
         } else {
             drawText(name, Theme.font(12), Theme.faint, Self.width - pad, y + 7, align: .right)
         }
@@ -138,10 +141,10 @@ final class Dashboard: Canvas {
         let light = tone == Theme.muted ? (l.state == .live ? Theme.good : Theme.faint) : tone == Theme.text ? Theme.accent : tone
         fill(NSRect(x: pad, y: y + 5, width: 8, height: 8), light, radius: 4)
         fill(NSRect(x: pad - 3, y: y + 2, width: 14, height: 14), light.withAlphaComponent(0.18), radius: 7)
-        drawText(line, Theme.font(13), tone == Theme.muted ? Theme.soft : tone, pad + 18, y, maxWidth: Self.width - pad * 2 - 148)
+        drawText(line, Theme.font(13), tone == Theme.muted ? Theme.soft : tone, pad + 18, y, maxWidth: Self.width - pad * 2 - (l.state == .live ? 18 : 148))
         let stamp: String
         switch l.state {
-        case .live: stamp = "Live · " + Fmt.clock(s?.t ?? 0, seconds: true)
+        case .live: stamp = ""          // the green light already says it
         case .connecting: stamp = "Connecting…"
         case .installing: stamp = "Installing agent…"
         case .offline: stamp = l.nextRetry.map { "Retry in \(max(1, Int($0.timeIntervalSinceNow))) s" } ?? "Offline"
@@ -667,9 +670,6 @@ final class Dashboard: Canvas {
 
     private func footer(_ l: HostLink, _ s: Snapshot?, y: CGFloat) {
         hline(0, y - 2, Self.width, Theme.line)
-        var info = s.map { "Up \(Fmt.duration($0.uptime))" } ?? ""
-        if let s, s.load.count == 3 { info += " · load " + s.load.map { String(format: "%.1f", $0) }.joined(separator: " / ") }
-        drawText(info.isEmpty ? "Logging every minute on each Mac" : info + " · logging every minute", Theme.font(12), Theme.faint, pad, y + 10)
         var x = Self.width - pad
         // Screen: that Mac's screen in the browser, when it has `vitals-agent screen on`.
         let screen = l.info?.screen.flatMap(URL.init(string:)).map { url in { NSWorkspace.shared.open(url); () } }
