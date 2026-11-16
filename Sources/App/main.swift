@@ -237,7 +237,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggle() {
         // Right-click or control-click: a short menu straight to each Mac's screen and dashboard.
         if let e = NSApp.currentEvent, e.type == .rightMouseUp || e.modifierFlags.contains(.control) { return showMenu() }
-        panel.isVisible ? close() : open()
+        if panel.isVisible { return close() }
+        // A press on the icon can reach the click-elsewhere monitor first and close the panel just
+        // before this release arrives; that click meant "close", so don't open it again.
+        if Date().timeIntervalSince(closedAt) < 0.35 { return }
+        open()
+    }
+
+    /// The icon's rectangle on screen, so a click on it counts as a toggle, not a click elsewhere.
+    private func iconFrame() -> NSRect? {
+        guard let b = item.button, let w = b.window else { return nil }
+        return w.convertToScreen(b.convert(b.bounds, to: nil))
     }
 
     private func showMenu() {
@@ -306,11 +316,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for l in links { if l.state == .live { l.send("now") } }
         dashboard.link.fetchHistory()
         historyTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.dashboard.link.fetchHistory() }
-        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() }
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            if let r = self.iconFrame(), r.insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation) { return }
+            self.close()
+        }
         dashboard.needsDisplay = true
     }
 
+    private var closedAt = Date.distantPast
     private func close() {
+        closedAt = Date()
         panel.orderOut(nil)
         panelClosed()
     }
