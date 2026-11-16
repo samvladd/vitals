@@ -1,29 +1,51 @@
 import AppKit
 
-// True-black flat, cooled for a monitor: depth is a lightness step, colour lives on data only.
+// Graphite, after the Aegis UI Kit 2 tokens: one neutral ramp for every surface, border and text;
+// colour only where it means something, states (good, warning, danger) and data series. Depth is a
+// hairline border with a lit top edge, never a hard shadow.
 enum Theme {
-    static let ground   = NSColor(hex: 0x0c0d0f)
-    static let surface  = NSColor(hex: 0x15171a)
-    static let raised   = NSColor(hex: 0x24272c)   // tracks, nested panels, controls
-    static let line     = NSColor(hex: 0x202328)
-    static let grid     = NSColor(hex: 0x23262b)
-    static let text     = NSColor.white
-    static let muted    = NSColor(hex: 0xb4b4b4)
-    static let faint    = NSColor(hex: 0x8f9296)
-    static let accent   = NSColor(hex: 0xc6f24e)   // the one data hue; also "good"
-    static let warning  = NSColor(hex: 0xe5a93b)
-    static let negative = NSColor(hex: 0xe5566f)
-    static let chart2   = NSColor(hex: 0xe6e6e6)
-    static let chart3   = NSColor(hex: 0x6b6b6b)
-    static let chart4   = NSColor(hex: 0x34383e)
+    static let ground   = NSColor(hex: 0x141415)   // --bg
+    static let surface  = NSColor(hex: 0x19191b)   // --panel: the cards
+    static let raised   = NSColor(hex: 0x242427)   // --raise: tracks, nested panels, controls
+    static let raisedHi = NSColor(hex: 0x2c2c30)   // --raise-h: a control under the pointer
+    static let sunk     = NSColor(hex: 0x0f0f10)   // --sunk: wells inside a card
+    static let line     = NSColor(hex: 0xededed, alpha: 0.08)
+    static let line2    = NSColor(hex: 0xededed, alpha: 0.12)
+    static let line3    = NSColor(hex: 0xededed, alpha: 0.20)
+    static let edge     = NSColor(white: 1, alpha: 0.04)   // the lit top edge of a card
+    static let grid     = NSColor(hex: 0xededed, alpha: 0.06)
+    static let text     = NSColor(hex: 0xededed)   // --ink
+    static let soft     = NSColor(hex: 0xc8c8cc)
+    static let muted    = NSColor(hex: 0xa1a1a6)   // --dim
+    static let faint    = NSColor(hex: 0x85858b)   // --mute: labels and axes
+    static let accent   = NSColor(hex: 0x38cae6)   // --c1: the first data series (power, CPU)
+    static let good     = NSColor(hex: 0x7fe3a0)   // --ok
+    static let switchOn = NSColor(hex: 0x2e9e5e)   // --sw-on
+    static let warning  = NSColor(hex: 0xf5be62)   // --warn
+    static let negative = NSColor(hex: 0xff7b7b)   // --bad
+    static let chart2   = NSColor(hex: 0xa796ff)   // --c2 (GPU)
+    static let chart3   = NSColor(hex: 0x85858b)   // --c6: quiet series
+    static let chart4   = NSColor(hex: 0x3a3a3f)   // the rest, "other"
+    static let series3  = NSColor(hex: 0x7fe3a0)   // --c3 (memory)
 
-    static let pillGood = (NSColor(hex: 0x222a10), accent)
-    static let pillWarn = (NSColor(hex: 0x2b2414), warning)
-    static let pillBad  = (NSColor(hex: 0x2c1a20), negative)
-    static let pillNeutral = (NSColor(hex: 0x24272c), NSColor.white)
+    /// On macOS 26 and later the panel sits on Liquid Glass: the ground goes clear and the cards turn
+    /// translucent graphite, so the glass shows around and faintly through them.
+    static var glass = false
+    static var backdrop: NSColor { glass ? .clear : ground }
+    static var card: NSColor { glass ? NSColor(hex: 0x19191b, alpha: 0.66) : surface }
+
+    static func softFill(_ c: NSColor) -> NSColor { c.withAlphaComponent(0.15) }
+    static let pillGood = (softFill(good), good)
+    static let pillWarn = (softFill(warning), warning)
+    static let pillBad  = (softFill(negative), negative)
+    static let pillNeutral = (NSColor(hex: 0xededed, alpha: 0.08), NSColor(hex: 0xc8c8cc))
 
     static func font(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         .monospacedDigitSystemFont(ofSize: size, weight: weight)
+    }
+    /// Numbers that matter, as the kit sets them: monospaced (SF Mono here, Geist Mono there).
+    static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
+        .monospacedSystemFont(ofSize: size, weight: weight)
     }
 }
 
@@ -76,8 +98,10 @@ enum Fmt {
 enum Prefs {
     private static let d = UserDefaults.standard
     /// The other Macs, as SSH hosts, in tab order. Each is keyed "ssh:<host>"; this Mac is "local".
+    /// None until you add some in Settings (or a two-Mac install had one): a fresh install shows
+    /// just the Mac it runs on.
     static var remoteHosts: [String] {
-        get { d.stringArray(forKey: "remoteHosts") ?? [d.string(forKey: "remoteHost") ?? "mac-mini"] }
+        get { d.stringArray(forKey: "remoteHosts") ?? d.string(forKey: "remoteHost").map { [$0] } ?? [] }
         set { d.set(newValue, forKey: "remoteHosts") }
     }
     static func key(_ host: String) -> String { "ssh:\(host)" }
@@ -98,7 +122,8 @@ enum Prefs {
         guard d.object(forKey: "remoteHosts") == nil else { return }
         let hosts = remoteHosts
         remoteHosts = hosts
-        let first = key(hosts[0])
+        guard let firstHost = hosts.first else { return }
+        let first = key(firstHost)
         if d.string(forKey: "selected") == "remote" { selected = first }
         switch d.string(forKey: "menuBar") {
         case "both": menuBar = "all"

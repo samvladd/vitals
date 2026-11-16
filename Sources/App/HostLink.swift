@@ -11,6 +11,8 @@ final class HostLink {
     private(set) var info: MachineInfo?
     private(set) var snap: Snapshot?
     private(set) var live: [(t: Double, w: Double)] = []
+    /// The last two minutes of a few readings, for the panel's sparklines: "cpu", "mem", "temp", "gpu".
+    private(set) var trend: [String: [Double]] = [:]
     private(set) var history: History?
     private(set) var state: State = .connecting
     private(set) var nextRetry: Date?
@@ -146,6 +148,12 @@ final class HostLink {
             snap = s
             if let w = s.wSystem { live.append((s.t, w)) }
             if let first = live.first, s.t - first.t > 900 { live.removeFirst(live.count / 4) }
+            let readings: [(String, Double?)] = [("cpu", s.cpu), ("mem", s.memUsed / max(1, s.memTotal) * 100), ("temp", s.tCPU), ("gpu", s.gpu)]
+            for (k, v) in readings {
+                guard let v else { continue }
+                trend[k, default: []].append(v)
+                if trend[k]!.count > 120 { trend[k]!.removeFirst(trend[k]!.count - 120) }
+            }
             if state != .live {
                 state = .live; backoff = 2
                 let p = Prefs.fanPolicy(key)

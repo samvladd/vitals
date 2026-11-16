@@ -56,6 +56,13 @@ cat > $APP/Contents/Info.plist <<PLIST
   <key>NSAppleEventsUsageDescription</key><string>Vitals opens Terminal so you can type your password once to enable fan control on your Mac mini.</string>
 </dict></plist>
 PLIST
-codesign --force --sign - $APP/Contents/Resources/vitals-agent
-codesign --force --sign - $APP
+# Signed by the App Sprout LLC team (P8WQ4HA33H) when its certificate is in the keychain; otherwise
+# ad hoc, as before. VITALS_SIGN_ID overrides either (any identity `security find-identity` lists).
+SIGN_ID=${VITALS_SIGN_ID:-}
+if [[ -z $SIGN_ID ]]; then
+  SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/\(TYXWZ6VRLT\)/{print $2; exit}')
+  [[ -n $SIGN_ID ]] || SIGN_ID=-
+fi
+codesign --force --sign "$SIGN_ID" $APP/Contents/Resources/vitals-agent
+codesign --force --sign "$SIGN_ID" $APP
 echo "built $APP $VERSION ($(du -sh $APP | cut -f1))"

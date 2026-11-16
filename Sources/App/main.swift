@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboard.onSetup = { [weak self] l in self?.setup(l, remove: false) }
         dashboard.onOpenLogs = { [weak self] in self?.openLogs() }
         dashboard.onHeight = { [weak self] h in if self?.settings == nil { self?.resize(h) } }
-        dashboard.selectionChanged = { [weak self] in self?.applyIntervals(); self?.dashboard.link.fetchHistory(); self?.dashboard.needsDisplay = true }
+        dashboard.selectionChanged = { [weak self] in self?.applyIntervals(); self?.dashboard.link.fetchHistory(); self?.dashboard.reveal(); self?.dashboard.needsDisplay = true }
 
         panel = DropPanel(contentRect: dashboard.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         panel.isFloatingPanel = true
@@ -39,10 +39,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         let container = NSView(frame: dashboard.frame)
         container.wantsLayer = true
-        container.layer?.cornerRadius = 14
+        container.layer?.cornerRadius = 16
         container.layer?.masksToBounds = true
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = Theme.line.cgColor
+        container.layer?.borderColor = Theme.line2.cgColor
+        // macOS 26 and later: the panel is Liquid Glass, tinted graphite so the numbers stay easy to
+        // read over any wallpaper. Earlier systems keep the solid graphite ground.
+        if #available(macOS 26.0, *), !CommandLine.arguments.contains("--no-glass") {
+            let glass = NSGlassEffectView(frame: container.bounds)
+            glass.autoresizingMask = [.width, .height]
+            glass.cornerRadius = 16
+            glass.style = .regular
+            glass.tintColor = Theme.ground.withAlphaComponent(0.6)
+            container.addSubview(glass)
+            container.layer?.backgroundColor = Theme.ground.withAlphaComponent(0.35).cgColor
+            Theme.glass = true
+        }
         container.addSubview(dashboard)
         dashboard.autoresizingMask = [.width, .height]
         panel.contentView = container
@@ -58,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // `--render <dir>`: draw the panel to PNG files and quit (for design review).
         if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine.arguments.count {
+            Canvas.still = true
             let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
             // Settings is made early so the Tailscale suggestions have time to arrive.
             var preview: SettingsView?
@@ -200,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatus() {
         let shown = shownInBar
-        let key = StatusRenderer.readings(for: shown).map { "\($0.top)|\($0.bottom)" }.joined(separator: ",")
+        let key = StatusRenderer.readings(for: shown).map { "\($0.icon)|\($0.top)|\($0.bottom)" }.joined(separator: ",")
             + shown.map { "\($0.key)=\($0.state == .live)" }.joined()
         guard key != lastStatusKey else { return }      // redraw the menu bar only when the text changes
         lastStatusKey = key
@@ -224,7 +237,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggle() {
         // Right-click or control-click: a short menu straight to each Mac's screen and dashboard.
         if let e = NSApp.currentEvent, e.type == .rightMouseUp || e.modifierFlags.contains(.control) { return showMenu() }
-        panel.isVisible ? close() : open()
+        if panel.isVisible { return close() }
+        // A press on the icon can reach the click-elsewhere monitor first and close the panel just
+        // before this release arrives; that click meant "close", so don't open it again.
+        if Date().timeIntervalSince(closedAt) < 0.35 { return }
+        open()
+    }
+
+    /// The icon's rectangle on screen, so a click on it counts as a toggle, not a click elsewhere.
+    private func iconFrame() -> NSRect? {
+        guard let b = item.button, let w = b.window else { return nil }
+        return w.convertToScreen(b.convert(b.bounds, to: nil))
     }
 
     private func showMenu() {
@@ -277,17 +300,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         x = min(max(x, screen.visibleFrame.minX + 8), screen.visibleFrame.maxX - size.width - 8)
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: r.minY - 6))
         panel.contentView?.isHidden = false
+        // Arrive: the panel fades in while its cards rise and its numbers count up.
+        dashboard.reveal()
+        if !Canvas.reduceMotion() {
+            panel.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { c in
+                c.duration = 0.18
+                c.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+                panel.animator().alphaValue = 1
+            }
+        } else { panel.alphaValue = 1 }
         panel.orderFrontRegardless()
         panel.makeKey()
         applyIntervals()
         for l in links { if l.state == .live { l.send("now") } }
         dashboard.link.fetchHistory()
         historyTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.dashboard.link.fetchHistory() }
-        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in self?.close() }
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            if let r = self.iconFrame(), r.insetBy(dx: -2, dy: -2).contains(NSEvent.mouseLocation) { return }
+            self.close()
+        }
         dashboard.needsDisplay = true
     }
 
+    private var closedAt = Date.distantPast
     private func close() {
+        closedAt = Date()
         panel.orderOut(nil)
         panelClosed()
     }

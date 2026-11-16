@@ -111,7 +111,7 @@ final class SettingsView: Canvas, NSTextFieldDelegate {
     private var y: CGFloat = 0
 
     override func render() {
-        fill(bounds, Theme.ground)
+        fill(bounds, Theme.backdrop)
         drawText("Settings", Theme.font(20, .semibold), Theme.text, pad, 18)
         let done = NSRect(x: Dashboard.width - pad - 72, y: 16, width: 72, height: 28)
         let hov = hit(done, "done") { [weak self] _ in self?.window?.makeFirstResponder(nil); self?.onDone?() }
@@ -124,7 +124,7 @@ final class SettingsView: Canvas, NSTextFieldDelegate {
             var ry = y
             for l in links where !l.isLocal {
                 let host = l.sshHost ?? "", name = l.name(among: links)
-                let dot: NSColor = { switch l.state { case .live: return Theme.accent; case .offline: return Theme.negative; default: return Theme.warning } }()
+                let dot: NSColor = { switch l.state { case .live: return Theme.good; case .offline: return Theme.negative; default: return Theme.warning } }()
                 fill(NSRect(x: x, y: ry + 7, width: 6, height: 6), dot, radius: 3)
                 let nw = drawText(name, Theme.font(13, .medium), Theme.text, x + 14, ry + 1, maxWidth: w - 60).width
                 if name != host { drawText(host, Theme.font(12), Theme.faint, x + 22 + nw, ry + 2, maxWidth: max(0, w - 68 - nw)) }
@@ -168,7 +168,7 @@ final class SettingsView: Canvas, NSTextFieldDelegate {
                     let r = NSRect(x: cx, y: ry, width: cw, height: 26)
                     let hov = hit(r, "suggest.\(s.host)") { [weak self] _ in self?.add(s.host) }
                     stroke(r, hov ? Theme.text : Theme.chart4, radius: 13)
-                    drawText("+", Theme.font(13, .medium), Theme.accent, r.minX + 11, r.minY + 4)
+                    drawText("+", Theme.font(13, .medium), Theme.text, r.minX + 11, r.minY + 4)
                     drawText(s.host, f, hov ? Theme.text : Theme.muted, r.minX + 24, r.minY + 5, maxWidth: w - 40)
                     cx = r.maxX + 6
                 }
@@ -218,8 +218,8 @@ final class SettingsView: Canvas, NSTextFieldDelegate {
                 if on { try? SMAppService.mainApp.unregister() } else { try? SMAppService.mainApp.register() }
                 self?.needsDisplay = true
             }
-            fill(tr, on ? Theme.accent : Theme.raised, radius: 10)
-            fill(NSRect(x: on ? tr.maxX - 18 : tr.minX + 2, y: tr.minY + 2, width: 16, height: 16), on ? Theme.ground : Theme.chart2, radius: 8)
+            fill(tr, on ? Theme.switchOn : Theme.raised, radius: 10)
+            fill(NSRect(x: on ? tr.maxX - 18 : tr.minX + 2, y: tr.minY + 2, width: 16, height: 16), on ? NSColor.white : Theme.muted, radius: 8)
             return 32
         }
 
